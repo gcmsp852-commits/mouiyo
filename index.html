@@ -175,15 +175,6 @@
             });
             
             await video.play().catch(e => console.warn("自動再生ブロック:", e));
-
-            // Native BarcodeDetector の初期化
-            if ('BarcodeDetector' in window) {
-                try {
-                    barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
-                } catch (e) {
-                    console.warn("BarcodeDetector initialize error:", e);
-                }
-            }
             
             isScanning = true;
             scanStage = 1; /* 第1QRから探索開始 */
@@ -254,56 +245,34 @@ async function scanLoop() {
         lastDetectTime = now;
 
         try {
-            let resultData = null;
-            let resultPts = null;
-            let resultMgmt = undefined;
+            zxingCanvas.width = overlayCanvas.width;
+            zxingCanvas.height = overlayCanvas.height;
+            zxingCtx.drawImage(video, 0, 0, zxingCanvas.width, zxingCanvas.height);
+            const imageData = zxingCtx.getImageData(0, 0, zxingCanvas.width, zxingCanvas.height);
 
-            // フェーズ1: Native BarcodeDetectorがあれば優先的に試す (高速・高精度)
-            if (scanStage === 1 && barcodeDetector) {
-                try {
-                    const barcodes = await barcodeDetector.detect(video);
-                    if (barcodes.length > 0) {
-                        const bc = barcodes[0];
-                        resultData = bc.rawValue;
-                        resultPts = [
-                            { x: bc.cornerPoints[0].x, y: bc.cornerPoints[0].y },
-                            { x: bc.cornerPoints[1].x, y: bc.cornerPoints[1].y },
-                            { x: bc.cornerPoints[2].x, y: bc.cornerPoints[2].y },
-                            { x: bc.cornerPoints[3].x, y: bc.cornerPoints[3].y }
-                        ];
-                    }
-                } catch (e) {
-                    // BarcodeDetector エラー時は jsQR にフォールバック
-                }
+            const scanOptions = { inversionAttempts: "attemptBoth" };
+            
+            // フェーズ3: 第2QR探索中のみappEncMaskを設定
+            if (scanStage === 3 && appMask) {
+                scanOptions.appEncMask = Array.from(appMask);
             }
 
-            // フェーズ3（appMaskあり）または BarcodeDetector が見つけられなかった場合は jsQR を実行
-            if (!resultData) {
-                zxingCanvas.width = overlayCanvas.width;
-                zxingCanvas.height = overlayCanvas.height;
-                zxingCtx.drawImage(video, 0, 0, zxingCanvas.width, zxingCanvas.height);
-                const imageData = zxingCtx.getImageData(0, 0, zxingCanvas.width, zxingCanvas.height);
+            // 単一検出モード（multi:false）
+            const result = jsQR(imageData.data, imageData.width, imageData.height, scanOptions);
+            
+            let resultData = null;
+            let resultMgmt = undefined;
+            let resultPts = null;
 
-                const scanOptions = { inversionAttempts: "attemptBoth" };
-                
-                // フェーズ3: 第2QR探索中のみappEncMaskを設定
-                if (scanStage === 3 && appMask) {
-                    scanOptions.appEncMask = Array.from(appMask);
-                }
-
-                // 単一検出モード（multi:false）
-                const result = jsQR(imageData.data, imageData.width, imageData.height, scanOptions);
-                
-                if (result && result.data) {
-                    resultData = result.data;
-                    resultMgmt = result.managementCode;
-                    resultPts = [
-                        result.location.topLeftCorner,
-                        result.location.topRightCorner,
-                        result.location.bottomRightCorner,
-                        result.location.bottomLeftCorner
-                    ];
-                }
+            if (result && result.data) {
+                resultData = result.data;
+                resultMgmt = result.managementCode;
+                resultPts = [
+                    result.location.topLeftCorner,
+                    result.location.topRightCorner,
+                    result.location.bottomRightCorner,
+                    result.location.bottomLeftCorner
+                ];
             }
 
             if (resultData) {
