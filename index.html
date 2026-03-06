@@ -33,6 +33,9 @@
   </style>
 </head>
 <body>
+
+  <script src="./jsQR.js"></script>
+
   <header>
     <h1>QRツイン リーダー（改造jsQR版）</h1>
   </header>
@@ -108,19 +111,19 @@
       debugResult: document.getElementById('debugResult'),
     };
 
-const state = {
-  stream: null,
-  rafId: 0,
-  running: false,
-  starting: false,   // 追加
-  lastFrameAt: 0,
-  scanning: false,
-  latestTwin: null,
-  latestManagement: null,
-  latestSecondRaw: null,
-  latestSecondMaskNo: null,
-  latestSecondDecodeStage: null,
-};
+    const state = {
+      stream: null,
+      rafId: 0,
+      running: false,
+      starting: false,
+      lastFrameAt: 0,
+      scanning: false,
+      latestTwin: null,
+      latestManagement: null,
+      latestSecondRaw: null,
+      latestSecondMaskNo: null,
+      latestSecondDecodeStage: null,
+    };
 
     function setStatus(text, cls='') {
       els.appStatus.className = 'status ' + cls;
@@ -152,10 +155,6 @@ const state = {
         canvas.height = h;
       }
       return true;
-    }
-
-    function bytesToHex(bytes) {
-      return Array.from(bytes).map(v => v.toString(16).padStart(2, '0')).join('');
     }
 
     function bytesToUtf8(bytes) {
@@ -231,91 +230,78 @@ const state = {
       ].join('\n');
     }
 
-async function startCamera() {
-  if (state.starting) return;
-  if (state.running && state.stream && els.video.srcObject === state.stream) return;
+    async function startCamera() {
+      if (state.starting) return;
+      if (state.running && state.stream && els.video.srcObject === state.stream) return;
 
-  state.starting = true;
-  setStatus('カメラ起動準備中', 'warn');
+      state.starting = true;
+      setStatus('カメラ起動準備中', 'warn');
 
-  try {
-    // 既存ストリームが残っていたら明示停止
-    if (state.stream) {
-      for (const tr of state.stream.getTracks()) tr.stop();
-      state.stream = null;
+      try {
+        if (state.stream) {
+          for (const tr of state.stream.getTracks()) tr.stop();
+          state.stream = null;
+        }
+
+        state.running = false;
+        if (state.rafId) cancelAnimationFrame(state.rafId);
+        state.rafId = 0;
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
+          audio: false
+        });
+
+        state.stream = stream;
+
+        if (els.video.srcObject !== stream) {
+          els.video.srcObject = stream;
+        }
+
+        await new Promise((resolve) => {
+          if (els.video.readyState >= 1) return resolve();
+          const onLoaded = () => {
+            els.video.removeEventListener('loadedmetadata', onLoaded);
+            resolve();
+          };
+          els.video.addEventListener('loadedmetadata', onLoaded, { once: true });
+        });
+
+        await els.video.play();
+
+        state.running = true;
+        state.lastFrameAt = 0;
+        setStatus('カメラ起動中', 'ok');
+        tick();
+      } catch (e) {
+        state.running = false;
+        setStatus('カメラ起動失敗', 'err');
+        els.debugResult.textContent = String(e?.message || e);
+      } finally {
+        state.starting = false;
+      }
     }
 
-    state.running = false;
-    if (state.rafId) cancelAnimationFrame(state.rafId);
-    state.rafId = 0;
+    function stopCamera() {
+      state.running = false;
+      state.starting = false;
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      },
-      audio: false
-    });
+      if (state.rafId) cancelAnimationFrame(state.rafId);
+      state.rafId = 0;
 
-    state.stream = stream;
+      try { els.video.pause(); } catch {}
 
-    // ここで初めてセット
-    if (els.video.srcObject !== stream) {
-      els.video.srcObject = stream;
+      if (state.stream) {
+        for (const tr of state.stream.getTracks()) tr.stop();
+        state.stream = null;
+      }
+
+      els.video.srcObject = null;
     }
-
-    // metadataが来るのを待つ
-    await new Promise((resolve) => {
-      if (els.video.readyState >= 1) return resolve();
-      const onLoaded = () => {
-        els.video.removeEventListener('loadedmetadata', onLoaded);
-        resolve();
-      };
-      els.video.addEventListener('loadedmetadata', onLoaded, { once: true });
-    });
-
-    try {
-      await els.video.play();
-    } catch (e) {
-      // interrupted系を拾っても、その時点で別ロードが走っただけなので詳細表示
-      throw e;
-    }
-
-    state.running = true;
-    state.lastFrameAt = 0;
-    setStatus('カメラ起動中', 'ok');
-    tick();
-  } catch (e) {
-    state.running = false;
-    setStatus('カメラ起動失敗', 'err');
-    els.debugResult.textContent = String(e?.message || e);
-  } finally {
-    state.starting = false;
-  }
-}
-
-function stopCamera() {
-  state.running = false;
-  state.starting = false;
-
-  if (state.rafId) cancelAnimationFrame(state.rafId);
-  state.rafId = 0;
-
-  if (els.video) {
-    try { els.video.pause(); } catch {}
-  }
-
-  if (state.stream) {
-    for (const tr of state.stream.getTracks()) tr.stop();
-    state.stream = null;
-  }
-
-  if (els.video) {
-    els.video.srcObject = null;
-    // load() は呼ばない
-  }
-}
 
     async function tick() {
       if (!state.running) return;
@@ -417,45 +403,6 @@ function stopCamera() {
   </script>
 
   <script>
-    /*
-      改造jsQR版の QRTwinDecoder.extract()
-      -------------------------------------------------
-      重要:
-      これは「改造jsQRが以下のAPIを持つ」前提で書いています。
-
-      window.jsQR.extractQRCandidates(imageData, width, height, options)
-        => [{ location, binaryData, rawBytes, version, formatInfo, chunk }, ...]
-
-      window.jsQR.decodeWithDetails(imageData, width, height, options)
-        => {
-             data,
-             binaryData,
-             rawBytes,
-             location,
-             version,
-             formatInfo:{ maskPattern, errorCorrectionLevel },
-             bitStream: {
-               bits: "0101...",
-               bytes: Uint8Array,
-               terminator1Index: number,
-               terminator2Index: number,
-               userEndIndex: number,
-               managementStartIndex: number,
-               managementBits: "0101010101010101"
-             },
-             rawCodewords: Uint8Array,
-             maskedCodewords: Uint8Array,
-             unmaskedCodewords: Uint8Array,
-             decodeStage: "success"
-           }
-
-      window.jsQR.decodeCandidateWithDetails(candidate, options)
-        => 同様
-
-      つまり標準jsQRそのままでは動きません。
-      あなたが今まで進めてきた「誤り訂正前データを取りたい改造jsQR」を、このAPIに合わせれば接続できます。
-    */
-
     (function(){
       function ensureJsQRPatched() {
         if (!window.jsQR) throw new Error('jsQR が読み込まれていません');
@@ -508,12 +455,7 @@ function stopCamera() {
         const maxX = Math.max(...xs) + pad;
         const minY = Math.min(...ys) - pad;
         const maxY = Math.max(...ys) + pad;
-        return {
-          x: minX,
-          y: minY,
-          w: maxX - minX,
-          h: maxY - minY,
-        };
+        return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
       }
 
       function centerOfCorners(corners) {
@@ -538,20 +480,13 @@ function stopCamera() {
 
       function parseManagement16(rawBits) {
         if (!rawBits || rawBits.length !== 16) {
-          return {
-            rawBits: rawBits || '',
-            appEncrypted: false,
-            maskNumber: null,
-            extra: { parseError: true }
-          };
+          return { rawBits: rawBits || '', appEncrypted: false, maskNumber: null, extra: { parseError: true } };
         }
         return {
           rawBits,
           appEncrypted: rawBits[0] === '1',
           maskNumber: parseInt(rawBits.slice(1, 4), 2),
-          extra: {
-            reserved: rawBits.slice(4)
-          }
+          extra: { reserved: rawBits.slice(4) }
         };
       }
 
@@ -699,15 +634,8 @@ function stopCamera() {
         let candidates = collectCandidatesFromFrame(imageData);
         let { first, second } = chooseTwinPair(candidates);
 
-        if (first && !second) {
-          second = tryDecodeMissingSideByCrop(imageData, first, null);
-        }
-
-        if (!first && second) {
-          first = second;
-          second = null;
-        }
-
+        if (first && !second) second = tryDecodeMissingSideByCrop(imageData, first, null);
+        if (!first && second) { first = second; second = null; }
         if (!first) return null;
 
         if (!second) {
@@ -727,7 +655,6 @@ function stopCamera() {
         }
 
         if (!first.management && first.decodedText) {
-          // 第1候補に管理部がない場合、中央高精度再decodeを1回試す
           const b = boundsFromCorners(first.corners || [
             { x: 0, y: 0 }, { x: canvas.width, y: 0 }, { x: canvas.width, y: canvas.height }, { x: 0, y: canvas.height }
           ], 18);
@@ -749,7 +676,6 @@ function stopCamera() {
           } catch {}
         }
 
-        // 第2が通常読取失敗でも rawBytes を優先保持
         if (!second.decodedText && !second.rawBytes && second.corners) {
           const b = boundsFromCorners(second.corners, 18);
           try {
@@ -781,20 +707,14 @@ function stopCamera() {
       }
 
       async function decodeSecondRawAfterAppDecrypt({ rawBytes }) {
-        // ここは本来「復号後の codewords を bitstream / data bytes に戻す」改造jsQR APIに繋ぐのが本命。
-        // ただし、そのAPI名はまだあなたの改造内容次第なので、段階的に置いてある。
         if (window.jsQR && typeof window.jsQR.decodeAppDecryptedCodewords === 'function') {
           const decoded = await window.jsQR.decodeAppDecryptedCodewords(rawBytes, {
             assumeByteMode: true,
             allowPartial: false,
           });
-          return {
-            decodedText: decoded?.data ?? '[復号後再decode失敗]'
-          };
+          return { decodedText: decoded?.data ?? '[復号後再decode失敗]' };
         }
-        return {
-          decodedText: bytesToUtf8(rawBytes)
-        };
+        return { decodedText: bytesToUtf8(rawBytes) };
       }
 
       window.QRTwinDecoder = {
@@ -803,23 +723,5 @@ function stopCamera() {
       };
     })();
   </script>
-
-  <!--
-    ここで改造jsQR本体を読み込んでください。
-    例:
-    <script src="./jsQR.js"></script>
-
-    重要:
-    このHTML単体では、改造jsQRの内部実装までは含んでいません。
-    理由は、標準jsQRには存在しない以下APIが必要だからです。
-
-    1) extractQRCandidates
-    2) decodeCandidateWithDetails
-    3) decodeWithDetails
-    4) (将来) decodeAppDecryptedCodewords
-
-    つまり今回のコードは、あなたの改造jsQRに対してそのまま接続できる
-    QRTwinDecoder.extract() の完成形です。
-  -->
 </body>
 </html>
