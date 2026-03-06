@@ -323,127 +323,60 @@ exports.default = GenericGFPoly;
 
 "use strict";
 
-var __assign = (this && this.__assign) || Object.assign || function(t) {
-    for (var s, i = 1, n = arguments.length; i < n; i++) {
-        s = arguments[i];
-        for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
-            t[p] = s[p];
-    }
-    return t;
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 var binarizer_1 = __webpack_require__(4);
 var decoder_1 = __webpack_require__(5);
 var extractor_1 = __webpack_require__(11);
 var locator_1 = __webpack_require__(12);
-function scan(matrix, options) {
+function scan(matrix) {
     var locations = locator_1.locate(matrix);
-    if (!locations)
+    if (!locations) {
         return null;
-    var results = []; // ★ 追加：結果を格納する配列
+    }
     for (var _i = 0, locations_1 = locations; _i < locations_1.length; _i++) {
         var location_1 = locations_1[_i];
         var extracted = extractor_1.extract(matrix, location_1);
-        var decoded = decoder_1.decode(extracted.matrix, options);
+        var decoded = decoder_1.decode(extracted.matrix);
         if (decoded) {
-            var res = void 0;
-            if (options && options.extractRawOnly) {
-                res = __assign({}, decoded, { location: {
-                        topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
-                        topLeftCorner: extracted.mappingFunction(0, 0),
-                        bottomRightCorner: extracted.mappingFunction(location_1.dimension, location_1.dimension),
-                        bottomLeftCorner: extracted.mappingFunction(0, location_1.dimension),
-                        topRightFinderPattern: location_1.topRight,
-                        topLeftFinderPattern: location_1.topLeft,
-                        bottomLeftFinderPattern: location_1.bottomLeft,
-                        bottomRightAlignmentPattern: location_1.alignmentPattern,
-                    } });
-            }
-            else {
-                res = {
-                    binaryData: decoded.bytes,
-                    data: decoded.text,
-                    chunks: decoded.chunks,
-                    version: decoded.version,
-                    managementCode: decoded.managementCode,
-                    location: {
-                        topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
-                        topLeftCorner: extracted.mappingFunction(0, 0),
-                        bottomRightCorner: extracted.mappingFunction(location_1.dimension, location_1.dimension),
-                        bottomLeftCorner: extracted.mappingFunction(0, location_1.dimension),
-                        topRightFinderPattern: location_1.topRight,
-                        topLeftFinderPattern: location_1.topLeft,
-                        bottomLeftFinderPattern: location_1.bottomLeft,
-                        bottomRightAlignmentPattern: location_1.alignmentPattern,
-                    },
-                    matrix: matrix,
-                    isRaw: decoded.isRaw,
-                    codewords: decoded.codewords,
-                    formatInfo: decoded.formatInfo,
-                    rawMatrixData: decoded.rawMatrixData
-                };
-            }
-            if (options && options.multi) {
-                results.push(res); // ★ multiモードなら配列に追加して続行
-            }
-            else {
-                // multi: false だが、抽出したデータがRAW(復号失敗)だった場合、
-                // 他にもっと良い候補（正常に読める第1QR）があるかもしれないため、リターンせずに後回しにする
-                if (res.isRaw) {
-                    results.push(res);
-                } else {
-                    return res; // 正常に読めたQRがあれば即座に返す
-                }
-            }
-        }
-    }
-    
-    // 正常に読めたものがなく、RAW（失敗）だけが残った場合、あるいはmultiモードの場合
-    if (results.length > 0) {
-        if (options && options.multi) {
-            return results;
-        } else {
-            return results[0]; // multi:falseなら最初のRAWを返す（復号失敗時の生データ取得用）
+            return {
+                binaryData: decoded.bytes,
+                data: decoded.text,
+                chunks: decoded.chunks,
+                version: decoded.version,
+                location: {
+                    topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
+                    topLeftCorner: extracted.mappingFunction(0, 0),
+                    bottomRightCorner: extracted.mappingFunction(location_1.dimension, location_1.dimension),
+                    bottomLeftCorner: extracted.mappingFunction(0, location_1.dimension),
+                    topRightFinderPattern: location_1.topRight,
+                    topLeftFinderPattern: location_1.topLeft,
+                    bottomLeftFinderPattern: location_1.bottomLeft,
+                    bottomRightAlignmentPattern: location_1.alignmentPattern,
+                },
+            };
         }
     }
     return null;
 }
-var defaultOptions = { inversionAttempts: "attemptBoth" };
+var defaultOptions = {
+    inversionAttempts: "attemptBoth",
+};
 function jsQR(data, width, height, providedOptions) {
     if (providedOptions === void 0) { providedOptions = {}; }
-    var options = {
-        inversionAttempts: providedOptions.inversionAttempts || defaultOptions.inversionAttempts,
-        appEncMask: providedOptions.appEncMask,
-        extractRawOnly: providedOptions.extractRawOnly,
-        multi: providedOptions.multi,
-        extractRawForFailed: providedOptions.extractRawForFailed
-    };
+    var options = defaultOptions;
+    Object.keys(options || {}).forEach(function (opt) {
+        options[opt] = providedOptions[opt] || options[opt];
+    });
     var shouldInvert = options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst";
     var tryInvertedFirst = options.inversionAttempts === "onlyInvert" || options.inversionAttempts === "invertFirst";
     var _a = binarizer_1.binarize(data, width, height, shouldInvert), binarized = _a.binarized, inverted = _a.inverted;
-    var result = scan(tryInvertedFirst ? inverted : binarized, options);
-    // ★ multiモード時の両面スキャン統合ロジック
-    if (options.multi) {
-        var allResults = result ? result : [];
-        if (options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst") {
-            var result2 = scan(tryInvertedFirst ? binarized : inverted, options);
-            if (result2) {
-                allResults = allResults.concat(result2);
-            }
-        }
-        return allResults.length > 0 ? allResults : null;
-    }
+    var result = scan(tryInvertedFirst ? inverted : binarized);
     if (!result && (options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst")) {
-        result = scan(tryInvertedFirst ? binarized : inverted, options);
+        result = scan(tryInvertedFirst ? binarized : inverted);
     }
     return result;
 }
 jsQR.default = jsQR;
-jsQR.resumeDecode = function (rawData, appMask) {
-    if (!rawData)
-        return null;
-    return decoder_1.resumeDecode(rawData, appMask);
-};
 exports.default = jsQR;
 
 
@@ -639,9 +572,10 @@ var DATA_MASKS = [
 function buildFunctionPatternMask(version) {
     var dimension = 17 + 4 * version.versionNumber;
     var matrix = BitMatrix_1.BitMatrix.createEmpty(dimension, dimension);
-    matrix.setRegion(0, 0, 9, 9, true);
-    matrix.setRegion(dimension - 8, 0, 8, 9, true);
-    matrix.setRegion(0, dimension - 8, 9, 8, true);
+    matrix.setRegion(0, 0, 9, 9, true); // Top left finder pattern + separator + format
+    matrix.setRegion(dimension - 8, 0, 8, 9, true); // Top right finder pattern + separator + format
+    matrix.setRegion(0, dimension - 8, 9, 8, true); // Bottom left finder pattern + separator + format
+    // Alignment patterns
     for (var _i = 0, _a = version.alignmentPatternCenters; _i < _a.length; _i++) {
         var x = _a[_i];
         for (var _b = 0, _c = version.alignmentPatternCenters; _b < _c.length; _b++) {
@@ -651,11 +585,11 @@ function buildFunctionPatternMask(version) {
             }
         }
     }
-    matrix.setRegion(6, 9, 1, dimension - 17, true);
-    matrix.setRegion(9, 6, dimension - 17, 1, true);
+    matrix.setRegion(6, 9, 1, dimension - 17, true); // Vertical timing pattern
+    matrix.setRegion(9, 6, dimension - 17, 1, true); // Horizontal timing pattern
     if (version.versionNumber > 6) {
-        matrix.setRegion(dimension - 11, 0, 3, 6, true);
-        matrix.setRegion(0, dimension - 11, 6, 3, true);
+        matrix.setRegion(dimension - 11, 0, 3, 6, true); // Version info, top right
+        matrix.setRegion(0, dimension - 11, 6, 3, true); // Version info, bottom left
     }
     return matrix;
 }
@@ -666,9 +600,10 @@ function readCodewords(matrix, version, formatInfo) {
     var codewords = [];
     var currentByte = 0;
     var bitsRead = 0;
+    // Read columns in pairs, from right to left
     var readingUp = true;
     for (var columnIndex = dimension - 1; columnIndex > 0; columnIndex -= 2) {
-        if (columnIndex === 6) {
+        if (columnIndex === 6) { // Skip whole column with vertical alignment pattern;
             columnIndex--;
         }
         for (var i = 0; i < dimension; i++) {
@@ -682,7 +617,7 @@ function readCodewords(matrix, version, formatInfo) {
                         bit = !bit;
                     }
                     currentByte = pushBit(bit, currentByte);
-                    if (bitsRead === 8) {
+                    if (bitsRead === 8) { // Whole bytes
                         codewords.push(currentByte);
                         bitsRead = 0;
                         currentByte = 0;
@@ -697,7 +632,7 @@ function readCodewords(matrix, version, formatInfo) {
 function readVersion(matrix) {
     var dimension = matrix.height;
     var provisionalVersion = Math.floor((dimension - 17) / 4);
-    if (provisionalVersion <= 6) {
+    if (provisionalVersion <= 6) { // 6 and under dont have version info in the QR code
         return version_1.VERSIONS[provisionalVersion - 1];
     }
     var topRightVersionBits = 0;
@@ -730,6 +665,8 @@ function readVersion(matrix) {
             bestDifference = difference;
         }
     }
+    // We can tolerate up to 3 bits of error since no two version info codewords will
+    // differ in less than 8 bits.
     if (bestDifference <= 3) {
         return bestVersion;
     }
@@ -737,21 +674,21 @@ function readVersion(matrix) {
 function readFormatInformation(matrix) {
     var topLeftFormatInfoBits = 0;
     for (var x = 0; x <= 8; x++) {
-        if (x !== 6) {
+        if (x !== 6) { // Skip timing pattern bit
             topLeftFormatInfoBits = pushBit(matrix.get(x, 8), topLeftFormatInfoBits);
         }
     }
     for (var y = 7; y >= 0; y--) {
-        if (y !== 6) {
+        if (y !== 6) { // Skip timing pattern bit
             topLeftFormatInfoBits = pushBit(matrix.get(8, y), topLeftFormatInfoBits);
         }
     }
     var dimension = matrix.height;
     var topRightBottomRightFormatInfoBits = 0;
-    for (var y = dimension - 1; y >= dimension - 7; y--) {
+    for (var y = dimension - 1; y >= dimension - 7; y--) { // bottom left
         topRightBottomRightFormatInfoBits = pushBit(matrix.get(8, y), topRightBottomRightFormatInfoBits);
     }
-    for (var x = dimension - 8; x < dimension; x++) {
+    for (var x = dimension - 8; x < dimension; x++) { // top right
         topRightBottomRightFormatInfoBits = pushBit(matrix.get(x, 8), topRightBottomRightFormatInfoBits);
     }
     var bestDifference = Infinity;
@@ -766,7 +703,7 @@ function readFormatInformation(matrix) {
             bestFormatInfo = formatInfo;
             bestDifference = difference;
         }
-        if (topLeftFormatInfoBits !== topRightBottomRightFormatInfoBits) {
+        if (topLeftFormatInfoBits !== topRightBottomRightFormatInfoBits) { // also try the other option
             difference = numBitsDiffering(topRightBottomRightFormatInfoBits, bits);
             if (difference < bestDifference) {
                 bestFormatInfo = formatInfo;
@@ -774,6 +711,7 @@ function readFormatInformation(matrix) {
             }
         }
     }
+    // Hamming distance of the 32 masked codes is 7, by construction, so <= 3 bits differing means we found a match
     if (bestDifference <= 3) {
         return bestFormatInfo;
     }
@@ -789,17 +727,22 @@ function getDataBlocks(codewords, version, ecLevel) {
             totalCodewords += block.dataCodewordsPerBlock + ecInfo.ecCodewordsPerBlock;
         }
     });
+    // In some cases the QR code will be malformed enough that we pull off more or less than we should.
+    // If we pull off less there's nothing we can do.
+    // If we pull off more we can safely truncate
     if (codewords.length < totalCodewords) {
         return null;
     }
     codewords = codewords.slice(0, totalCodewords);
     var shortBlockSize = ecInfo.ecBlocks[0].dataCodewordsPerBlock;
+    // Pull codewords to fill the blocks up to the minimum size
     for (var i = 0; i < shortBlockSize; i++) {
         for (var _i = 0, dataBlocks_1 = dataBlocks; _i < dataBlocks_1.length; _i++) {
             var dataBlock = dataBlocks_1[_i];
             dataBlock.codewords.push(codewords.shift());
         }
     }
+    // If there are any large blocks, pull codewords to fill the last element of those
     if (ecInfo.ecBlocks.length > 1) {
         var smallBlockCount = ecInfo.ecBlocks[0].numBlocks;
         var largeBlockCount = ecInfo.ecBlocks[1].numBlocks;
@@ -807,6 +750,7 @@ function getDataBlocks(codewords, version, ecLevel) {
             dataBlocks[smallBlockCount + i].codewords.push(codewords.shift());
         }
     }
+    // Add the rest of the codewords to the blocks. These are the error correction codewords.
     while (codewords.length > 0) {
         for (var _a = 0, dataBlocks_2 = dataBlocks; _a < dataBlocks_2.length; _a++) {
             var dataBlock = dataBlocks_2[_a];
@@ -815,8 +759,7 @@ function getDataBlocks(codewords, version, ecLevel) {
     }
     return dataBlocks;
 }
-// ★ options 全体を受け取れるように変更
-function decodeMatrix(matrix, options) {
+function decodeMatrix(matrix) {
     var version = readVersion(matrix);
     if (!version) {
         return null;
@@ -826,28 +769,11 @@ function decodeMatrix(matrix, options) {
         return null;
     }
     var codewords = readCodewords(matrix, version, formatInfo);
-    // ★ 追加：寸止めロジック（RAWデータ抽出）
-    // extractRawOnly が true の場合、XORや誤り訂正を行わず、ここでRAWデータを返す
-    if (options && options.extractRawOnly) {
-        return {
-            isRaw: true,
-            codewords: codewords,
-            version: version,
-            formatInfo: formatInfo
-        };
-    }
-    // ★ options から appEncMask を取り出す
-    var appEncMask = options ? options.appEncMask : undefined;
-    // ★ 誤り訂正の前に、指定されたマスクでXOR解除を行う！
-    if (appEncMask && appEncMask.length > 0) {
-        for (var i = 0; i < codewords.length; i++) {
-            codewords[i] ^= appEncMask[i];
-        }
-    }
     var dataBlocks = getDataBlocks(codewords, version, formatInfo.errorCorrectionLevel);
     if (!dataBlocks) {
         return null;
     }
+    // Count total number of data bytes
     var totalBytes = dataBlocks.reduce(function (a, b) { return a + b.numDataCodewords; }, 0);
     var resultBytes = new Uint8ClampedArray(totalBytes);
     var resultIndex = 0;
@@ -855,9 +781,6 @@ function decodeMatrix(matrix, options) {
         var dataBlock = dataBlocks_3[_i];
         var correctedBytes = reedsolomon_1.decode(dataBlock.codewords, dataBlock.codewords.length - dataBlock.numDataCodewords);
         if (!correctedBytes) {
-            if (options && options.extractRawForFailed) {
-                return { isRaw: true, codewords: codewords, version: version, formatInfo: formatInfo };
-            }
             return null;
         }
         for (var i = 0; i < dataBlock.numDataCodewords; i++) {
@@ -865,28 +788,21 @@ function decodeMatrix(matrix, options) {
         }
     }
     try {
-        var res = decodeData_1.decode(resultBytes, version.versionNumber);
-        if (options && options.extractRawForFailed) {
-            res.rawMatrixData = { codewords: codewords, version: version, formatInfo: formatInfo };
-        }
-        return res;
+        return decodeData_1.decode(resultBytes, version.versionNumber);
     }
     catch (_a) {
-        if (options && options.extractRawForFailed) {
-            return { isRaw: true, codewords: codewords, version: version, formatInfo: formatInfo };
-        }
         return null;
     }
 }
-// ★ options 全体を受け取れるように、引数と戻り値（anyを追加）を変更
-function decode(matrix, options) {
+function decode(matrix) {
     if (matrix == null) {
         return null;
     }
-    var result = decodeMatrix(matrix, options);
+    var result = decodeMatrix(matrix);
     if (result) {
         return result;
     }
+    // Decoding didn't work, try mirroring the QR across the topLeft -> bottomRight line.
     for (var x = 0; x < matrix.width; x++) {
         for (var y = x + 1; y < matrix.height; y++) {
             if (matrix.get(x, y) !== matrix.get(y, x)) {
@@ -895,48 +811,9 @@ function decode(matrix, options) {
             }
         }
     }
-    return decodeMatrix(matrix, options);
+    return decodeMatrix(matrix);
 }
 exports.decode = decode;
-// ★ 新設：保存しておいたRAWデータとマスクから処理を再開する関数
-function resumeDecode(rawData, appMask) {
-    try {
-        var codewords = rawData.codewords, version = rawData.version, formatInfo = rawData.formatInfo;
-        // 元の配列を破壊しないようにコピーを作成
-        var decryptedCodewords = codewords.slice();
-        // 1. マスク（XOR）による暗号解除
-        if (appMask && appMask.length > 0) {
-            for (var i = 0; i < decryptedCodewords.length; i++) {
-                decryptedCodewords[i] ^= appMask[i];
-            }
-        }
-        // 2. ブロック分割＋インタリーブ解除
-        var dataBlocks = getDataBlocks(decryptedCodewords, version, formatInfo.errorCorrectionLevel);
-        if (!dataBlocks) {
-            return null;
-        }
-        var totalBytes = dataBlocks.reduce(function (a, b) { return a + b.numDataCodewords; }, 0);
-        var resultBytes = new Uint8ClampedArray(totalBytes);
-        var resultIndex = 0;
-        // 3. 誤り訂正（ここで初めてRSを実行）
-        for (var _i = 0, dataBlocks_4 = dataBlocks; _i < dataBlocks_4.length; _i++) {
-            var dataBlock = dataBlocks_4[_i];
-            var correctedBytes = reedsolomon_1.decode(dataBlock.codewords, dataBlock.codewords.length - dataBlock.numDataCodewords);
-            if (!correctedBytes) {
-                return null;
-            } // 復号失敗（パスワード間違いなどでエラー訂正不可）
-            for (var i = 0; i < dataBlock.numDataCodewords; i++) {
-                resultBytes[resultIndex++] = correctedBytes[i];
-            }
-        }
-        // 4. 文字列へのデコード（Decode payload）
-        return decodeData_1.decode(resultBytes, version.versionNumber);
-    }
-    catch (e) {
-        return null;
-    }
-}
-exports.resumeDecode = resumeDecode;
 
 
 /***/ }),
@@ -1085,16 +962,7 @@ function decode(data, version) {
     while (stream.available() >= 4) {
         var mode = stream.readBits(4);
         if (mode === ModeByte.Terminator) {
-            // ★ ここから書き換え！ ★
-            // 管理部16bit + 終端4bit (合計20bit) が残っているか確認
-            if (stream.available() >= 20) {
-                // 管理部16ビットを読み取って result に保存
-                result.managementCode = stream.readBits(16);
-                // 後ろの終端4ビット(0000)を読み飛ばす
-                stream.readBits(4);
-            }
             return result;
-            // ★ ここまで書き換え！ ★
         }
         else if (mode === ModeByte.ECI) {
             if (stream.readBits(1) === 0) {
@@ -9838,12 +9706,14 @@ function sum(values) {
 // Takes three finder patterns and organizes them into topLeft, topRight, etc
 function reorderFinderPatterns(pattern1, pattern2, pattern3) {
     var _a, _b, _c, _d;
+    // Find distances between pattern centers
     var oneTwoDistance = distance(pattern1, pattern2);
     var twoThreeDistance = distance(pattern2, pattern3);
     var oneThreeDistance = distance(pattern1, pattern3);
     var bottomLeft;
     var topLeft;
     var topRight;
+    // Assume one closest to other two is B; A and C will just be guesses at first
     if (twoThreeDistance >= oneTwoDistance && twoThreeDistance >= oneThreeDistance) {
         _a = [pattern2, pattern1, pattern3], bottomLeft = _a[0], topLeft = _a[1], topRight = _a[2];
     }
@@ -9853,13 +9723,17 @@ function reorderFinderPatterns(pattern1, pattern2, pattern3) {
     else {
         _c = [pattern1, pattern3, pattern2], bottomLeft = _c[0], topLeft = _c[1], topRight = _c[2];
     }
+    // Use cross product to figure out whether bottomLeft (A) and topRight (C) are correct or flipped in relation to topLeft (B)
+    // This asks whether BC x BA has a positive z component, which is the arrangement we want. If it's negative, then
+    // we've got it flipped around and should swap topRight and bottomLeft.
     if (((topRight.x - topLeft.x) * (bottomLeft.y - topLeft.y)) - ((topRight.y - topLeft.y) * (bottomLeft.x - topLeft.x)) < 0) {
         _d = [topRight, bottomLeft], bottomLeft = _d[0], topRight = _d[1];
     }
     return { bottomLeft: bottomLeft, topLeft: topLeft, topRight: topRight };
 }
+// Computes the dimension (number of modules on a side) of the QR Code based on the position of the finder patterns
 function computeDimension(topLeft, topRight, bottomLeft, matrix) {
-    var moduleSize = (sum(countBlackWhiteRun(topLeft, bottomLeft, matrix, 5)) / 7 +
+    var moduleSize = (sum(countBlackWhiteRun(topLeft, bottomLeft, matrix, 5)) / 7 + // Divide by 7 since the ratio is 1:1:3:1:1
         sum(countBlackWhiteRun(topLeft, topRight, matrix, 5)) / 7 +
         sum(countBlackWhiteRun(bottomLeft, topLeft, matrix, 5)) / 7 +
         sum(countBlackWhiteRun(topRight, topLeft, matrix, 5)) / 7) / 4;
@@ -9879,6 +9753,9 @@ function computeDimension(topLeft, topRight, bottomLeft, matrix) {
     }
     return { dimension: dimension, moduleSize: moduleSize };
 }
+// Takes an origin point and an end point and counts the sizes of the black white run from the origin towards the end point.
+// Returns an array of elements, representing the pixel size of the black white run.
+// Uses a variant of http://en.wikipedia.org/wiki/Bresenham's_line_algorithm
 function countBlackWhiteRunTowardsPoint(origin, end, matrix, length) {
     var switchPoints = [{ x: Math.floor(origin.x), y: Math.floor(origin.y) }];
     var steep = Math.abs(end.y - origin.y) > Math.abs(end.x - origin.x);
@@ -9904,7 +9781,11 @@ function countBlackWhiteRunTowardsPoint(origin, end, matrix, length) {
     var xStep = fromX < toX ? 1 : -1;
     var yStep = fromY < toY ? 1 : -1;
     var currentPixel = true;
+    // Loop up until x == toX, but not beyond
     for (var x = fromX, y = fromY; x !== toX + xStep; x += xStep) {
+        // Does current pixel mean we have moved white to black or vice versa?
+        // Scanning black in state 0,2 and white in state 1, so if we find the wrong
+        // color, advance to next state or end if we are in state 2 already
         var realX = steep ? y : x;
         var realY = steep ? x : y;
         if (matrix.get(realX, realY) !== currentPixel) {
@@ -9934,15 +9815,20 @@ function countBlackWhiteRunTowardsPoint(origin, end, matrix, length) {
     }
     return distances;
 }
+// Takes an origin point and an end point and counts the sizes of the black white run in the origin point
+// along the line that intersects with the end point. Returns an array of elements, representing the pixel sizes
+// of the black white run. Takes a length which represents the number of switches from black to white to look for.
 function countBlackWhiteRun(origin, end, matrix, length) {
     var _a;
     var rise = end.y - origin.y;
     var run = end.x - origin.x;
     var towardsEnd = countBlackWhiteRunTowardsPoint(origin, end, matrix, Math.ceil(length / 2));
     var awayFromEnd = countBlackWhiteRunTowardsPoint(origin, { x: origin.x - run, y: origin.y - rise }, matrix, Math.ceil(length / 2));
-    var middleValue = towardsEnd.shift() + awayFromEnd.shift() - 1;
+    var middleValue = towardsEnd.shift() + awayFromEnd.shift() - 1; // Substract one so we don't double count a pixel
     return (_a = awayFromEnd.concat(middleValue)).concat.apply(_a, towardsEnd);
 }
+// Takes in a black white run and an array of expected ratios. Returns the average size of the run as well as the "error" -
+// that is the amount the run diverges from the expected ratio
 function scoreBlackWhiteRun(sequence, ratios) {
     var averageSize = sum(sequence) / sum(ratios);
     var error = 0;
@@ -9951,21 +9837,36 @@ function scoreBlackWhiteRun(sequence, ratios) {
     });
     return { averageSize: averageSize, error: error };
 }
+// Takes an X,Y point and an array of sizes and scores the point against those ratios.
+// For example for a finder pattern takes the ratio list of 1:1:3:1:1 and checks horizontal, vertical and diagonal ratios
+// against that.
 function scorePattern(point, ratios, matrix) {
     try {
         var horizontalRun = countBlackWhiteRun(point, { x: -1, y: point.y }, matrix, ratios.length);
         var verticalRun = countBlackWhiteRun(point, { x: point.x, y: -1 }, matrix, ratios.length);
-        var topLeftPoint = { x: Math.max(0, point.x - point.y) - 1, y: Math.max(0, point.y - point.x) - 1 };
+        var topLeftPoint = {
+            x: Math.max(0, point.x - point.y) - 1,
+            y: Math.max(0, point.y - point.x) - 1,
+        };
         var topLeftBottomRightRun = countBlackWhiteRun(point, topLeftPoint, matrix, ratios.length);
-        var bottomLeftPoint = { x: Math.min(matrix.width, point.x + point.y) + 1, y: Math.min(matrix.height, point.y + point.x) + 1 };
+        var bottomLeftPoint = {
+            x: Math.min(matrix.width, point.x + point.y) + 1,
+            y: Math.min(matrix.height, point.y + point.x) + 1,
+        };
         var bottomLeftTopRightRun = countBlackWhiteRun(point, bottomLeftPoint, matrix, ratios.length);
         var horzError = scoreBlackWhiteRun(horizontalRun, ratios);
         var vertError = scoreBlackWhiteRun(verticalRun, ratios);
         var diagDownError = scoreBlackWhiteRun(topLeftBottomRightRun, ratios);
         var diagUpError = scoreBlackWhiteRun(bottomLeftTopRightRun, ratios);
-        var ratioError = Math.sqrt(horzError.error * horzError.error + vertError.error * vertError.error + diagDownError.error * diagDownError.error + diagUpError.error * diagUpError.error);
+        var ratioError = Math.sqrt(horzError.error * horzError.error +
+            vertError.error * vertError.error +
+            diagDownError.error * diagDownError.error +
+            diagUpError.error * diagUpError.error);
         var avgSize = (horzError.averageSize + vertError.averageSize + diagDownError.averageSize + diagUpError.averageSize) / 4;
-        var sizeError = (Math.pow((horzError.averageSize - avgSize), 2) + Math.pow((vertError.averageSize - avgSize), 2) + Math.pow((diagDownError.averageSize - avgSize), 2) + Math.pow((diagUpError.averageSize - avgSize), 2)) / avgSize;
+        var sizeError = (Math.pow((horzError.averageSize - avgSize), 2) +
+            Math.pow((vertError.averageSize - avgSize), 2) +
+            Math.pow((diagDownError.averageSize - avgSize), 2) +
+            Math.pow((diagUpError.averageSize - avgSize), 2)) / avgSize;
         return ratioError + sizeError;
     }
     catch (_a) {
@@ -10011,15 +9912,33 @@ function locate(matrix) {
                 scans = [scans[1], scans[2], scans[3], scans[4], length_1];
                 length_1 = 1;
                 lastBit = v;
+                // Do the last 5 color changes ~ match the expected ratio for a finder pattern? 1:1:3:1:1 of b:w:b:w:b
                 var averageFinderPatternBlocksize = sum(scans) / 7;
-                var validFinderPattern = Math.abs(scans[0] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize && Math.abs(scans[1] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize && Math.abs(scans[2] - 3 * averageFinderPatternBlocksize) < 3 * averageFinderPatternBlocksize && Math.abs(scans[3] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize && Math.abs(scans[4] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize && !v;
+                var validFinderPattern = Math.abs(scans[0] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
+                    Math.abs(scans[1] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
+                    Math.abs(scans[2] - 3 * averageFinderPatternBlocksize) < 3 * averageFinderPatternBlocksize &&
+                    Math.abs(scans[3] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
+                    Math.abs(scans[4] - averageFinderPatternBlocksize) < averageFinderPatternBlocksize &&
+                    !v; // And make sure the current pixel is white since finder patterns are bordered in white
+                // Do the last 3 color changes ~ match the expected ratio for an alignment pattern? 1:1:1 of w:b:w
                 var averageAlignmentPatternBlocksize = sum(scans.slice(-3)) / 3;
-                var validAlignmentPattern = Math.abs(scans[2] - averageAlignmentPatternBlocksize) < averageAlignmentPatternBlocksize && Math.abs(scans[3] - averageAlignmentPatternBlocksize) < averageAlignmentPatternBlocksize && Math.abs(scans[4] - averageAlignmentPatternBlocksize) < averageAlignmentPatternBlocksize && v;
+                var validAlignmentPattern = Math.abs(scans[2] - averageAlignmentPatternBlocksize) < averageAlignmentPatternBlocksize &&
+                    Math.abs(scans[3] - averageAlignmentPatternBlocksize) < averageAlignmentPatternBlocksize &&
+                    Math.abs(scans[4] - averageAlignmentPatternBlocksize) < averageAlignmentPatternBlocksize &&
+                    v; // Is the current pixel black since alignment patterns are bordered in black
                 if (validFinderPattern) {
+                    // Compute the start and end x values of the large center black square
                     var endX_1 = x - scans[3] - scans[4];
                     var startX_1 = endX_1 - scans[2];
                     var line = { startX: startX_1, endX: endX_1, y: y };
-                    var matchingQuads = activeFinderPatternQuads.filter(function (q) { return (startX_1 >= q.bottom.startX && startX_1 <= q.bottom.endX) || (endX_1 >= q.bottom.startX && startX_1 <= q.bottom.endX) || (startX_1 <= q.bottom.startX && endX_1 >= q.bottom.endX && ((scans[2] / (q.bottom.endX - q.bottom.startX)) < MAX_QUAD_RATIO && (scans[2] / (q.bottom.endX - q.bottom.startX)) > MIN_QUAD_RATIO)); });
+                    // Is there a quad directly above the current spot? If so, extend it with the new line. Otherwise, create a new quad with
+                    // that line as the starting point.
+                    var matchingQuads = activeFinderPatternQuads.filter(function (q) {
+                        return (startX_1 >= q.bottom.startX && startX_1 <= q.bottom.endX) ||
+                            (endX_1 >= q.bottom.startX && startX_1 <= q.bottom.endX) ||
+                            (startX_1 <= q.bottom.startX && endX_1 >= q.bottom.endX && ((scans[2] / (q.bottom.endX - q.bottom.startX)) < MAX_QUAD_RATIO &&
+                                (scans[2] / (q.bottom.endX - q.bottom.startX)) > MIN_QUAD_RATIO));
+                    });
                     if (matchingQuads.length > 0) {
                         matchingQuads[0].bottom = line;
                     }
@@ -10028,10 +9947,18 @@ function locate(matrix) {
                     }
                 }
                 if (validAlignmentPattern) {
+                    // Compute the start and end x values of the center black square
                     var endX_2 = x - scans[4];
                     var startX_2 = endX_2 - scans[3];
                     var line = { startX: startX_2, y: y, endX: endX_2 };
-                    var matchingQuads = activeAlignmentPatternQuads.filter(function (q) { return (startX_2 >= q.bottom.startX && startX_2 <= q.bottom.endX) || (endX_2 >= q.bottom.startX && startX_2 <= q.bottom.endX) || (startX_2 <= q.bottom.startX && endX_2 >= q.bottom.endX && ((scans[2] / (q.bottom.endX - q.bottom.startX)) < MAX_QUAD_RATIO && (scans[2] / (q.bottom.endX - q.bottom.startX)) > MIN_QUAD_RATIO)); });
+                    // Is there a quad directly above the current spot? If so, extend it with the new line. Otherwise, create a new quad with
+                    // that line as the starting point.
+                    var matchingQuads = activeAlignmentPatternQuads.filter(function (q) {
+                        return (startX_2 >= q.bottom.startX && startX_2 <= q.bottom.endX) ||
+                            (endX_2 >= q.bottom.startX && startX_2 <= q.bottom.endX) ||
+                            (startX_2 <= q.bottom.startX && endX_2 >= q.bottom.endX && ((scans[2] / (q.bottom.endX - q.bottom.startX)) < MAX_QUAD_RATIO &&
+                                (scans[2] / (q.bottom.endX - q.bottom.startX)) > MIN_QUAD_RATIO));
+                    });
                     if (matchingQuads.length > 0) {
                         matchingQuads[0].bottom = line;
                     }
@@ -10054,92 +9981,70 @@ function locate(matrix) {
     }
     finderPatternQuads.push.apply(finderPatternQuads, activeFinderPatternQuads.filter(function (q) { return q.bottom.y - q.top.y >= 2; }));
     alignmentPatternQuads.push.apply(alignmentPatternQuads, activeAlignmentPatternQuads);
-    var validFinderPatterns = finderPatternQuads
-        .filter(function (q) { return q.bottom.y - q.top.y >= 2; })
+    var finderPatternGroups = finderPatternQuads
+        .filter(function (q) { return q.bottom.y - q.top.y >= 2; }) // All quads must be at least 2px tall since the center square is larger than a block
         .map(function (q) {
         var x = (q.top.startX + q.top.endX + q.bottom.startX + q.bottom.endX) / 4;
         var y = (q.top.y + q.bottom.y + 1) / 2;
-        if (!matrix.get(Math.round(x), Math.round(y)))
+        if (!matrix.get(Math.round(x), Math.round(y))) {
             return;
+        }
         var lengths = [q.top.endX - q.top.startX, q.bottom.endX - q.bottom.startX, q.bottom.y - q.top.y + 1];
         var size = sum(lengths) / lengths.length;
         var score = scorePattern({ x: Math.round(x), y: Math.round(y) }, [1, 1, 3, 1, 1], matrix);
         return { score: score, x: x, y: y, size: size };
     })
-        .filter(function (q) { return !!q; })
-        .sort(function (a, b) { return a.score - b.score; });
-    // ★ 改良点：QRツインの密集したマーク群から、正しい3つだけを幾何学的に抽出する
-    // ▼▼ src/locator/index.ts の下部を上書き ▼▼
-    // ★ 候補を少し増やして、見落としを防ぐ
-    var topFinderPatterns = validFinderPatterns.slice(0, 20);
-    var finderPatternGroups = [];
-    var len = topFinderPatterns.length;
-    for (var i = 0; i < len - 2; i++) {
-        for (var j = i + 1; j < len - 1; j++) {
-            for (var k = j + 1; k < len; k++) {
-                var p1 = topFinderPatterns[i];
-                var p2 = topFinderPatterns[j];
-                var p3 = topFinderPatterns[k];
-                // ① サイズのチェック（ピンボケを考慮して許容範囲を 0.5 -> 1.0 に緩和）
-                var sizeAvg = (p1.size + p2.size + p3.size) / 3;
-                var sizeErr = (Math.abs(p1.size - sizeAvg) + Math.abs(p2.size - sizeAvg) + Math.abs(p3.size - sizeAvg)) / sizeAvg;
-                if (sizeErr > 1.0)
-                    continue;
-                // ② 配置のチェック
-                var _a = reorderFinderPatterns(p1, p2, p3), topRight = _a.topRight, topLeft = _a.topLeft, bottomLeft = _a.bottomLeft;
-                var topSide = distance(topLeft, topRight);
-                var leftSide = distance(topLeft, bottomLeft);
-                var diag = distance(topRight, bottomLeft);
-                if (topSide === 0 || leftSide === 0)
-                    continue;
-                // ★ 縦と横の長さの比率（スマホを斜めに構えた時の歪みを考慮し、0.4 〜 2.5 と大幅に緩和）
-                var ratio = topSide / leftSide;
-                if (ratio < 0.4 || ratio > 2.5)
-                    continue;
-                // ★ 直角かどうか（これも斜め撮影を考慮して 0.4 〜 2.5 に緩和）
-                var angleRatio = (diag * diag) / (topSide * topSide + leftSide * leftSide);
-                if (angleRatio < 0.4 || angleRatio > 2.5)
-                    continue;
-                // 幾何学的な「歪み」のペナルティを軽くし、多少歪んでいてもデコード処理へ回す（50 -> 10）
-                var geoErr = Math.abs(1 - ratio) + Math.abs(1 - angleRatio);
-                var totalScore = p1.score + p2.score + p3.score + geoErr * 10;
-                finderPatternGroups.push({ points: [p1, p2, p3], score: totalScore });
-            }
+        .filter(function (q) { return !!q; }) // Filter out any rejected quads from above
+        .sort(function (a, b) { return a.score - b.score; })
+        // Now take the top finder pattern options and try to find 2 other options with a similar size.
+        .map(function (point, i, finderPatterns) {
+        if (i > MAX_FINDERPATTERNS_TO_SEARCH) {
+            return null;
         }
-    }
-    finderPatternGroups.sort(function (a, b) { return a.score - b.score; });
+        var otherPoints = finderPatterns
+            .filter(function (p, ii) { return i !== ii; })
+            .map(function (p) { return ({ x: p.x, y: p.y, score: p.score + (Math.pow((p.size - point.size), 2)) / point.size, size: p.size }); })
+            .sort(function (a, b) { return a.score - b.score; });
+        if (otherPoints.length < 2) {
+            return null;
+        }
+        var score = point.score + otherPoints[0].score + otherPoints[1].score;
+        return { points: [point].concat(otherPoints.slice(0, 2)), score: score };
+    })
+        .filter(function (q) { return !!q; }) // Filter out any rejected finder patterns from above
+        .sort(function (a, b) { return a.score - b.score; });
     if (finderPatternGroups.length === 0) {
         return null;
     }
+    var _a = reorderFinderPatterns(finderPatternGroups[0].points[0], finderPatternGroups[0].points[1], finderPatternGroups[0].points[2]), topRight = _a.topRight, topLeft = _a.topLeft, bottomLeft = _a.bottomLeft;
+    var alignment = findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft);
     var result = [];
-    // ★ 歪んだQRも拾えるように、処理に回すグループ数を増やす（6 -> 10）
-    var groupsToProcess = finderPatternGroups.slice(0, 10);
-    for (var _i = 0, groupsToProcess_1 = groupsToProcess; _i < groupsToProcess_1.length; _i++) {
-        var group = groupsToProcess_1[_i];
-        var _b = reorderFinderPatterns(group.points[0], group.points[1], group.points[2]), topRight = _b.topRight, topLeft = _b.topLeft, bottomLeft = _b.bottomLeft;
-        var alignment = findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft);
-        if (alignment) {
-            result.push({
-                alignmentPattern: { x: alignment.alignmentPattern.x, y: alignment.alignmentPattern.y },
-                bottomLeft: { x: bottomLeft.x, y: bottomLeft.y },
-                dimension: alignment.dimension,
-                topLeft: { x: topLeft.x, y: topLeft.y },
-                topRight: { x: topRight.x, y: topRight.y },
-            });
-        }
-        var midTopRight = recenterLocation(matrix, topRight);
-        var midTopLeft = recenterLocation(matrix, topLeft);
-        var midBottomLeft = recenterLocation(matrix, bottomLeft);
-        var centeredAlignment = findAlignmentPattern(matrix, alignmentPatternQuads, midTopRight, midTopLeft, midBottomLeft);
-        if (centeredAlignment) {
-            result.push({
-                alignmentPattern: { x: centeredAlignment.alignmentPattern.x, y: centeredAlignment.alignmentPattern.y },
-                bottomLeft: { x: midBottomLeft.x, y: midBottomLeft.y },
-                dimension: centeredAlignment.dimension,
-                topLeft: { x: midTopLeft.x, y: midTopLeft.y },
-                topRight: { x: midTopRight.x, y: midTopRight.y },
-            });
-        }
+    if (alignment) {
+        result.push({
+            alignmentPattern: { x: alignment.alignmentPattern.x, y: alignment.alignmentPattern.y },
+            bottomLeft: { x: bottomLeft.x, y: bottomLeft.y },
+            dimension: alignment.dimension,
+            topLeft: { x: topLeft.x, y: topLeft.y },
+            topRight: { x: topRight.x, y: topRight.y },
+        });
+    }
+    // We normally use the center of the quads as the location of the tracking points, which is optimal for most cases and will account
+    // for a skew in the image. However, In some cases, a slight skew might not be real and instead be caused by image compression
+    // errors and/or low resolution. For those cases, we'd be better off centering the point exactly in the middle of the black area. We
+    // compute and return the location data for the naively centered points as it is little additional work and allows for multiple
+    // attempts at decoding harder images.
+    var midTopRight = recenterLocation(matrix, topRight);
+    var midTopLeft = recenterLocation(matrix, topLeft);
+    var midBottomLeft = recenterLocation(matrix, bottomLeft);
+    var centeredAlignment = findAlignmentPattern(matrix, alignmentPatternQuads, midTopRight, midTopLeft, midBottomLeft);
+    if (centeredAlignment) {
+        result.push({
+            alignmentPattern: { x: centeredAlignment.alignmentPattern.x, y: centeredAlignment.alignmentPattern.y },
+            bottomLeft: { x: midBottomLeft.x, y: midBottomLeft.y },
+            topLeft: { x: midTopLeft.x, y: midTopLeft.y },
+            topRight: { x: midTopRight.x, y: midTopRight.y },
+            dimension: centeredAlignment.dimension,
+        });
     }
     if (result.length === 0) {
         return null;
@@ -10147,9 +10052,10 @@ function locate(matrix) {
     return result;
 }
 exports.locate = locate;
-// ※これより下の findAlignmentPattern 関数はそのまま残してください
 function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, bottomLeft) {
     var _a;
+    // Now that we've found the three finder patterns we can determine the blockSize and the size of the QR code.
+    // We'll use these to help find the alignment pattern but also later when we do the extraction.
     var dimension;
     var moduleSize;
     try {
@@ -10158,10 +10064,17 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     catch (e) {
         return null;
     }
-    var bottomRightFinderPattern = { x: topRight.x - topLeft.x + bottomLeft.x, y: topRight.y - topLeft.y + bottomLeft.y };
+    // Now find the alignment pattern
+    var bottomRightFinderPattern = {
+        x: topRight.x - topLeft.x + bottomLeft.x,
+        y: topRight.y - topLeft.y + bottomLeft.y,
+    };
     var modulesBetweenFinderPatterns = ((distance(topLeft, bottomLeft) + distance(topLeft, topRight)) / 2 / moduleSize);
     var correctionToTopLeft = 1 - (3 / modulesBetweenFinderPatterns);
-    var expectedAlignmentPattern = { x: topLeft.x + correctionToTopLeft * (bottomRightFinderPattern.x - topLeft.x), y: topLeft.y + correctionToTopLeft * (bottomRightFinderPattern.y - topLeft.y) };
+    var expectedAlignmentPattern = {
+        x: topLeft.x + correctionToTopLeft * (bottomRightFinderPattern.x - topLeft.x),
+        y: topLeft.y + correctionToTopLeft * (bottomRightFinderPattern.y - topLeft.y),
+    };
     var alignmentPatterns = alignmentPatternQuads
         .map(function (q) {
         var x = (q.top.startX + q.top.endX + q.bottom.startX + q.bottom.endX) / 4;
@@ -10169,12 +10082,16 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         if (!matrix.get(Math.floor(x), Math.floor(y))) {
             return;
         }
+        var lengths = [q.top.endX - q.top.startX, q.bottom.endX - q.bottom.startX, (q.bottom.y - q.top.y + 1)];
+        var size = sum(lengths) / lengths.length;
         var sizeScore = scorePattern({ x: Math.floor(x), y: Math.floor(y) }, [1, 1, 1], matrix);
         var score = sizeScore + distance({ x: x, y: y }, expectedAlignmentPattern);
         return { x: x, y: y, score: score };
     })
         .filter(function (v) { return !!v; })
         .sort(function (a, b) { return a.score - b.score; });
+    // If there are less than 15 modules between finder patterns it's a version 1 QR code and as such has no alignmemnt pattern
+    // so we can only use our best guess.
     var alignmentPattern = modulesBetweenFinderPatterns >= 15 && alignmentPatterns.length ? alignmentPatterns[0] : expectedAlignmentPattern;
     return { alignmentPattern: alignmentPattern, dimension: dimension };
 }
