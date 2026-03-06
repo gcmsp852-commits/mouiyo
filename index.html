@@ -47,13 +47,20 @@
 
     <div id="passwordScreen" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center;">
         <div style="background: #1e1e1e; padding: 20px; border-radius: 8px; width: 80%; max-width: 400px; text-align: center; border: 1px solid #333;">
-            <h3 style="color: #03DAC6; margin-top: 0;">🔒 パスワード入力</h3>
+            <h3 style="color: #03DAC6; margin-top: 0;">🔒 暗号化QRツイン検出</h3>
+            <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 10px;">
+                第1QR（表側）の読み取りに成功しました。
+            </p>
+            <div style="background: #121212; padding: 10px; border-radius: 4px; border: 1px dashed #00E676; margin-bottom: 20px; text-align: left; max-height: 100px; overflow-y: auto; color: #00E676; font-size: 0.9rem; word-break: break-all;">
+                <strong>第1QRの内容:</strong><br>
+                <span id="qr1PreviewText"></span>
+            </div>
             <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 20px;">
-                暗号化されたQRツインを検出しました。<br>復号するためのパスワードを入力してください。
+                第2QR（裏側）を復号するためのパスワードを入力してください。
             </p>
             <input type="password" id="appPasswordInput" placeholder="パスワード" style="width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 4px; border: 1px solid #555; background: #2c2c2c; color: #fff; box-sizing: border-box; font-size: 1rem;">
-            <button onclick="submitPassword()" style="background: #00E676; color: #000; width: 100%; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 1.1rem; border: none;">一瞬で復号する</button>
-            <button onclick="cancelPassword()" style="background: #555; color: #fff; width: 100%; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 1rem; border: none; margin-top: 10px;">キャンセル</button>
+            <button onclick="submitPassword()" style="background: #00E676; color: #000; width: 100%; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 1.1rem; border: none;">復号して第2QRを探す</button>
+            <button onclick="cancelPassword()" style="background: #555; color: #fff; width: 100%; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 1rem; border: none; margin-top: 10px;">最初からやり直す</button>
         </div>
     </div>
 
@@ -124,12 +131,14 @@
     let lastDetectTime = 0;
     const SCAN_INTERVAL_MS = 150; 
     
+    // スキャン段階 (1: 第1QR探索中, 2: パスワード待機中, 3: 第2QR探索中)
+    let scanStage = 1;
+
     let firstQR = null;
     let secondQR = null;
 
     let appPassword = null;
     let appMask = null;
-    let savedRawCandidates = [];
 
     async function startApp() {
         const startBtn = document.getElementById('startBtn');
@@ -168,6 +177,7 @@
             await video.play().catch(e => console.warn("自動再生ブロック:", e));
             
             isScanning = true;
+            scanStage = 1; /* 第1QRから探索開始 */
             requestAnimationFrame(scanLoop);
             return true;
         } catch (err) {
@@ -177,16 +187,17 @@
     }
 
     function showPasswordScreen() {
-        isScanning = false; 
+        isScanning = false;
+        scanStage = 2; // パスワード入力待機状態へ
+        document.getElementById('qr1PreviewText').innerText = firstQR.text;
         document.getElementById('appPasswordInput').value = "";
         document.getElementById('passwordScreen').style.display = 'flex';
     }
 
     function cancelPassword() {
         document.getElementById('passwordScreen').style.display = 'none';
-        isScanning = true;
-        lastDetectTime = Date.now(); 
-        requestAnimationFrame(scanLoop);
+        // キャンセルした場合は最初からやり直す
+        goBack();
     }
 
     function submitPassword() {
@@ -195,36 +206,11 @@
         
         appPassword = pw;
         appMask = deriveEncryptionMaskBytes(appPassword, 5000);
-
-        // まず保存済みRAW候補でresumeDecodeを試みる（即座に復号）
-        if (savedRawCandidates && savedRawCandidates.length > 0) {
-            let success = false;
-            for (let i = 0; i < savedRawCandidates.length; i++) {
-                const candidateRaw = savedRawCandidates[i];
-                const decoded = jsQR.resumeDecode(candidateRaw, Array.from(appMask));
-                
-                if (decoded) {
-                    secondQR = { 
-                        text: decoded.text, 
-                        managementCode: decoded.managementCode, 
-                        points: getPts(candidateRaw), 
-                        center: getCenter(getPts(candidateRaw)) 
-                    };
-                    success = true;
-                    break;
-                }
-            }
-            
-            if (success) {
-                updateUI();
-                document.getElementById('passwordScreen').style.display = 'none';
-                showResultScreen();
-                return;
-            }
-        }
         
-        // resumeDecodeで失敗した場合、appEncMask付きの通常スキャンに切り替えて再開
         document.getElementById('passwordScreen').style.display = 'none';
+        
+        // パスワード入力完了後、第2QRの探索へ
+        scanStage = 3; 
         isScanning = true;
         lastDetectTime = Date.now(); 
         requestAnimationFrame(scanLoop);
@@ -233,17 +219,6 @@
     function getPts(obj) {
         if (!obj || !obj.location) return [];
         return [obj.location.topLeftCorner, obj.location.topRightCorner, obj.location.bottomRightCorner, obj.location.bottomLeftCorner];
-    }
-
-    function getCenter(points) {
-        if (!points || points.length === 0) return { x: 0, y: 0 };
-        let sumX = 0, sumY = 0;
-        points.forEach(p => { sumX += p.x; sumY += p.y; });
-        return { x: sumX / points.length, y: sumY / points.length };
-    }
-
-    function getDistance(p1, p2) {
-        return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
     }
 
 async function scanLoop() {
@@ -262,7 +237,6 @@ async function scanLoop() {
     if (!isProcessing && now - lastDetectTime > SCAN_INTERVAL_MS && video.readyState >= 2) {
         isProcessing = true;
         lastDetectTime = now;
-        let detectedItems = [];
 
         try {
             zxingCanvas.width = overlayCanvas.width;
@@ -270,157 +244,79 @@ async function scanLoop() {
             zxingCtx.drawImage(video, 0, 0, zxingCanvas.width, zxingCanvas.height);
             const imageData = zxingCtx.getImageData(0, 0, zxingCanvas.width, zxingCanvas.height);
 
-            // ========== メインスキャン (1回のみ) ==========
-            const scanOptions = { inversionAttempts: "attemptBoth", multi: true, extractRawForFailed: true };
-            if (appMask) {
+            const scanOptions = { inversionAttempts: "attemptBoth" };
+            
+            // フェーズ3: 第2QR探索中のみappEncMaskを設定
+            if (scanStage === 3 && appMask) {
                 scanOptions.appEncMask = Array.from(appMask);
             }
 
-            const results = jsQR(imageData.data, imageData.width, imageData.height, scanOptions);
-            let currentRawCandidates = [];
+            // 単一検出モード（multi:false）で処理を軽くする
+            const result = jsQR(imageData.data, imageData.width, imageData.height, scanOptions);
 
-            if (results) {
-                const resultArray = Array.isArray(results) ? results : [results];
-                for (const result of resultArray) {
-                    if (!result) continue;
+            if (result && result.data) {
+                const pts = [
+                    result.location.topLeftCorner,
+                    result.location.topRightCorner,
+                    result.location.bottomRightCorner,
+                    result.location.bottomLeftCorner
+                ];
 
-                    // RAWデータを収集（復号失敗したもの ＆ 成功したものの両方）
-                    if (result.isRaw) {
-                        currentRawCandidates.push(result);
-                    } else if (result.rawMatrixData) {
-                        currentRawCandidates.push(result.rawMatrixData);
+                if (scanStage === 1) {
+                    // フェーズ1: 第1QRを発見
+                    firstQR = {
+                        text: result.data,
+                        managementCode: result.managementCode,
+                        points: pts
+                    };
+                    updateUI();
+
+                    const mgmtStr = firstQR.managementCode !== undefined ? 
+                                    firstQR.managementCode.toString(2).padStart(16, '0') : "0000000000000000";
+                    
+                    if (mgmtStr[7] === '1') {
+                        // 暗号化フラグ立っている → フェーズ2（パスワード入力）へ移行
+                        showPasswordScreen();
+                        isProcessing = false;
+                        return; // ここでスキャンループは一時停止
+                    } else {
+                        // 暗号化なし（通常のツイン等） → パスワードをスキップしてフェーズ3（第2QR探索）へ直行
+                        scanStage = 3;
                     }
-
-                    // 正常にデコードできたものをdetectedItemsに追加
-                    if (result.data) {
-                        const pts = [
-                            result.location.topLeftCorner,
-                            result.location.topRightCorner,
-                            result.location.bottomRightCorner,
-                            result.location.bottomLeftCorner
-                        ];
-                        detectedItems.push({
+                } 
+                else if (scanStage === 3) {
+                    // フェーズ3: 第2QRを探索
+                    // 第1QRと管理コードまたはテキストが違うかチェック
+                    const isDifferentText = result.data !== firstQR.text;
+                    const isDifferentManagement = firstQR.managementCode !== undefined && 
+                                                  result.managementCode !== undefined && 
+                                                  firstQR.managementCode !== result.managementCode;
+                    
+                    if (isDifferentText || isDifferentManagement) {
+                        secondQR = {
                             text: result.data,
                             managementCode: result.managementCode,
-                            points: pts,
-                            center: getCenter(pts)
-                        });
+                            points: pts
+                        };
+                        updateUI();
+                        
+                        // 両方揃ったので結果画面へ
+                        showResultScreen();
+                        isScanning = false;
+                        isProcessing = false;
+                        return;
                     }
                 }
             }
-
-            // RAW候補が更新されたら保存（パスワード入力画面での再開用）
-            if (currentRawCandidates.length > 0 && !appPassword) {
-                savedRawCandidates = currentRawCandidates;
-            }
-
         } catch (err) {
             console.error("Scan error:", err);
-        }
-
-        // 振り分けロジック実行
-        processDetections(detectedItems);
-
-        // 第1QR確定後の暗号化チェック
-        if (firstQR && !appPassword) {
-            const mgmtStr = firstQR.managementCode !== undefined ? 
-                            firstQR.managementCode.toString(2).padStart(16, '0') : "0000000000000000";
-            
-            if (mgmtStr[7] === '1') {
-                if (document.getElementById('passwordScreen').style.display !== 'flex') {
-                    showPasswordScreen();
-                    isProcessing = false;
-                    return; 
-                }
-            }
         }
 
         isProcessing = false;
     }
 
-    if (firstQR && secondQR) {
-        showResultScreen();
-        isScanning = false;
-        return;
-    }
-
     requestAnimationFrame(scanLoop);
 }
-    // ▼▼▼ QRツイン対応の振り分けロジック ▼▼▼
-    function hasDifferentManagement(item1, item2) {
-        if (item1.managementCode === undefined || item2.managementCode === undefined) return false;
-        return item1.managementCode !== item2.managementCode;
-    }
-
-    function processDetections(items) {
-        if (items.length === 0) return;
-
-        if (items.length >= 2) {
-            // もし2つ同時に検出された場合
-            if (!firstQR) {
-                firstQR = items[0];
-                secondQR = items[1];
-                updateUI();
-                return;
-            }
-            if (firstQR && !secondQR) {
-                // すでに1つ目があり、新たに2つ検出された場合
-                // firstQRと同一（または近い）ものを探し、もう一方をsecondQRとする
-                const isItem0Same = items[0].text === firstQR.text && items[0].managementCode === firstQR.managementCode;
-                const isItem1Same = items[1].text === firstQR.text && items[1].managementCode === firstQR.managementCode;
-
-                if (isItem0Same && !isItem1Same) {
-                    firstQR.points = items[0].points;
-                    secondQR = items[1];
-                } else if (!isItem0Same && isItem1Same) {
-                    firstQR.points = items[1].points;
-                    secondQR = items[0];
-                } else {
-                    // 情報では一致しない場合、距離で判定
-                    const dist0 = getDistance(firstQR.center, items[0].center);
-                    const dist1 = getDistance(firstQR.center, items[1].center);
-                    if (dist0 > dist1) {
-                        secondQR = items[0];
-                        firstQR = items[1]; 
-                    } else {
-                        secondQR = items[1];
-                        firstQR = items[0]; 
-                    }
-                }
-                updateUI();
-                return;
-            }
-        }
-
-        if (items.length === 1) {
-            const item = items[0];
-            
-            if (!firstQR) {
-                firstQR = item;
-                updateUI();
-            } else if (!secondQR) {
-                // テキストも管理部も全く同じ → 完全に同一のQR（同一フレームの重複検出やカメラ揺れ）
-                if (item.text === firstQR.text && item.managementCode === firstQR.managementCode) {
-                    firstQR.points = item.points;
-                    firstQR.center = item.center;
-                    return; // 2個目として登録しない
-                }
-
-                if (item.text !== firstQR.text) {
-                    secondQR = item;
-                    updateUI();
-                } else if (hasDifferentManagement(firstQR, item)) {
-                    secondQR = item;
-                    updateUI();
-                } else {
-                    // 同じテキスト、同じ管理コードの場合は上記で弾かれているため、ここは通常通らない
-                    // 万が一の場合のエラーハンドリング
-                    firstQR.points = item.points;
-                    firstQR.center = item.center;
-                }
-            }
-        }
-    }
 
     function updateUI() {
         if (firstQR) {
@@ -455,7 +351,7 @@ async function scanLoop() {
 
     function goBack() {
         firstQR = null; secondQR = null; appPassword = null; appMask = null;
-        savedRawCandidates = [];
+        scanStage = 1; // 状態を初期化して第1QRから再探索
         document.getElementById('text1').innerText = "未検出"; document.getElementById('text2').innerText = "未検出";
         document.getElementById('mg1').innerText = "--"; document.getElementById('mg2').innerText = "--";
         document.getElementById('resultScreen').style.display = 'none';
