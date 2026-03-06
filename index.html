@@ -163,22 +163,41 @@
         // カメラ起動処理
         async function startCamera() {
             try {
+                resultText.innerText = "カメラをリクエスト中...";
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
                 });
+                
                 video.srcObject = stream;
                 
+                // Safari用のおまじない
+                video.setAttribute("playsinline", true);
+                
+                // ビデオの読み込みを待つ
                 await new Promise((resolve) => {
-                    video.onloadedmetadata = resolve;
-                    setTimeout(resolve, 500);
+                    video.onloadeddata = () => {
+                        resolve();
+                    };
+                    // iOS safari等でonloadeddataが発火しない場合のフェイルセーフ
+                    setTimeout(resolve, 1500);
                 });
                 
-                await video.play();
+                try {
+                    await video.play();
+                } catch (playErr) {
+                    console.warn("自動再生エラー:", playErr);
+                    resultText.innerText = "再生エラー: 画面をタップしてください";
+                    return;
+                }
+
                 startBtn.style.display = 'none';
                 isScanning = true;
+                resultText.innerText = "スキャン待機中...";
                 animationId = requestAnimationFrame(scanLoop);
                 
             } catch (err) {
+                resultText.innerText = "カメラエラー: " + err.name + " " + err.message;
+                resultText.style.color = "#ff4444";
                 alert("カメラを起動できませんでした。\n" + err.message);
             }
         }
