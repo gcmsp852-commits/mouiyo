@@ -336,113 +336,6 @@ var binarizer_1 = __webpack_require__(4);
 var decoder_1 = __webpack_require__(5);
 var extractor_1 = __webpack_require__(11);
 var locator_1 = __webpack_require__(12);
-function cloneCodewords(arr) {
-    if (!arr)
-        return null;
-    return Array.isArray(arr) ? arr.slice() : Uint8ClampedArray.from(arr);
-}
-function cornersFromExtracted(extracted, location_1) {
-    return [
-        extracted.mappingFunction(0, 0),
-        extracted.mappingFunction(location_1.dimension, 0),
-        extracted.mappingFunction(location_1.dimension, location_1.dimension),
-        extracted.mappingFunction(0, location_1.dimension),
-    ];
-}
-function buildLocation(extracted, location_1) {
-    return {
-        topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
-        topLeftCorner: extracted.mappingFunction(0, 0),
-        bottomRightCorner: extracted.mappingFunction(location_1.dimension, location_1.dimension),
-        bottomLeftCorner: extracted.mappingFunction(0, location_1.dimension),
-        topRightFinderPattern: location_1.topRight,
-        topLeftFinderPattern: location_1.topLeft,
-        bottomLeftFinderPattern: location_1.bottomLeft,
-        bottomRightAlignmentPattern: location_1.alignmentPattern,
-        corners: cornersFromExtracted(extracted, location_1),
-    };
-}
-function managementCodeToBits(managementCode) {
-    if (managementCode == null || isNaN(managementCode)) {
-        return null;
-    }
-    return (managementCode >>> 0).toString(2).padStart(16, "0");
-}
-function normalizeDetailedResult(decoded, extracted, location_1, sourceMatrix, meta) {
-    if (meta === void 0) { meta = {}; }
-    if (!decoded)
-        return null;
-    var location = extracted && location_1 ? buildLocation(extracted, location_1) : (meta.location || null);
-    var rawCodewords = cloneCodewords(decoded.codewords || decoded.rawCodewords || decoded.maskedCodewords);
-    var unmaskedCodewords = cloneCodewords(decoded.unmaskedCodewords || decoded.codewords || decoded.rawCodewords);
-    var rawData = decoded.isRaw ? {
-        codewords: cloneCodewords(decoded.codewords),
-        version: decoded.version,
-        formatInfo: decoded.formatInfo,
-    } : null;
-    var managementBits = decoded.managementBits || managementCodeToBits(decoded.managementCode);
-    return {
-        data: decoded.text != null ? decoded.text : (decoded.data != null ? decoded.data : null),
-        text: decoded.text != null ? decoded.text : (decoded.data != null ? decoded.data : null),
-        binaryData: decoded.bytes || decoded.binaryData || null,
-        bytes: decoded.bytes || decoded.binaryData || null,
-        rawBytes: unmaskedCodewords || rawCodewords,
-        rawCodewords: rawCodewords,
-        unmaskedCodewords: unmaskedCodewords,
-        maskedCodewords: rawCodewords,
-        chunks: decoded.chunks || [],
-        version: decoded.version || meta.version || null,
-        formatInfo: decoded.formatInfo || meta.formatInfo || null,
-        location: location,
-        corners: location ? location.corners : null,
-        matrix: sourceMatrix || meta.matrix || null,
-        extractedMatrix: meta.extractedMatrix || null,
-        decodeStage: decoded.isRaw ? "raw-only" : "success",
-        failureReason: null,
-        managementCode: decoded.managementCode,
-        managementBits: managementBits,
-        bitStream: {
-            bits: null,
-            bytes: decoded.bytes || decoded.binaryData || null,
-            terminator1Index: null,
-            terminator2Index: null,
-            userEndIndex: null,
-            managementStartIndex: null,
-            managementBits: managementBits,
-        },
-        rawData: rawData,
-        score: meta.score || 0,
-    };
-}
-function buildCandidateFromExtracted(matrix, extracted, location_1, decoded, options, score) {
-    if (score === void 0) { score = 0; }
-    var detailed = normalizeDetailedResult(decoded, extracted, location_1, matrix, {
-        extractedMatrix: extracted.matrix,
-        score: score,
-    });
-    if (!detailed)
-        return null;
-    return {
-        location: detailed.location,
-        corners: detailed.corners,
-        binaryData: detailed.binaryData,
-        rawBytes: detailed.rawBytes,
-        rawCodewords: detailed.rawCodewords,
-        unmaskedCodewords: detailed.unmaskedCodewords,
-        maskedCodewords: detailed.maskedCodewords,
-        version: detailed.version,
-        formatInfo: detailed.formatInfo,
-        bitStream: detailed.bitStream,
-        data: detailed.data,
-        text: detailed.text,
-        extractedMatrix: extracted.matrix,
-        sourceMatrix: matrix,
-        rawData: detailed.rawData,
-        managementCode: detailed.managementCode,
-        managementBits: detailed.managementBits,
-        score: score,
-    };
-}
 function scan(matrix, options) {
     var locations = locator_1.locate(matrix);
     if (!locations)
@@ -453,7 +346,39 @@ function scan(matrix, options) {
         var extracted = extractor_1.extract(matrix, location_1);
         var decoded = decoder_1.decode(extracted.matrix, options);
         if (decoded) {
-            var res = buildCandidateFromExtracted(matrix, extracted, location_1, decoded, options, location_1.dimension || 0);
+            var res = void 0;
+            if (options && options.extractRawOnly) {
+                res = __assign({}, decoded, { location: {
+                        topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
+                        topLeftCorner: extracted.mappingFunction(0, 0),
+                        bottomRightCorner: extracted.mappingFunction(location_1.dimension, location_1.dimension),
+                        bottomLeftCorner: extracted.mappingFunction(0, location_1.dimension),
+                        topRightFinderPattern: location_1.topRight,
+                        topLeftFinderPattern: location_1.topLeft,
+                        bottomLeftFinderPattern: location_1.bottomLeft,
+                        bottomRightAlignmentPattern: location_1.alignmentPattern,
+                    } });
+            }
+            else {
+                res = {
+                    binaryData: decoded.bytes,
+                    data: decoded.text,
+                    chunks: decoded.chunks,
+                    version: decoded.version,
+                    managementCode: decoded.managementCode,
+                    location: {
+                        topRightCorner: extracted.mappingFunction(location_1.dimension, 0),
+                        topLeftCorner: extracted.mappingFunction(0, 0),
+                        bottomRightCorner: extracted.mappingFunction(location_1.dimension, location_1.dimension),
+                        bottomLeftCorner: extracted.mappingFunction(0, location_1.dimension),
+                        topRightFinderPattern: location_1.topRight,
+                        topLeftFinderPattern: location_1.topLeft,
+                        bottomLeftFinderPattern: location_1.bottomLeft,
+                        bottomRightAlignmentPattern: location_1.alignmentPattern,
+                    },
+                    matrix: matrix,
+                };
+            }
             if (options && options.multi) {
                 results.push(res); // ★ multiモードなら配列に追加して続行
             }
@@ -501,126 +426,6 @@ jsQR.resumeDecode = function (rawData, appMask) {
     if (!rawData)
         return null;
     return decoder_1.resumeDecode(rawData, appMask);
-};
-jsQR.extractQRCandidates = function (dataOrImageData, width, height, providedOptions) {
-    if (providedOptions === void 0) { providedOptions = {}; }
-    var data = dataOrImageData && dataOrImageData.data ? dataOrImageData.data : dataOrImageData;
-    var actualWidth = dataOrImageData && dataOrImageData.width ? dataOrImageData.width : width;
-    var actualHeight = dataOrImageData && dataOrImageData.height ? dataOrImageData.height : height;
-    var result = jsQR(data, actualWidth, actualHeight, __assign({}, providedOptions, { multi: true, extractRawOnly: true }));
-    if (!result)
-        return [];
-    return Array.isArray(result) ? result : [result];
-};
-jsQR.decodeWithDetails = function (dataOrImageData, width, height, providedOptions) {
-    if (providedOptions === void 0) { providedOptions = {}; }
-    var data = dataOrImageData && dataOrImageData.data ? dataOrImageData.data : dataOrImageData;
-    var actualWidth = dataOrImageData && dataOrImageData.width ? dataOrImageData.width : width;
-    var actualHeight = dataOrImageData && dataOrImageData.height ? dataOrImageData.height : height;
-    var result = jsQR(data, actualWidth, actualHeight, __assign({}, providedOptions, { multi: false }));
-    return result || null;
-};
-jsQR.decodeCandidateWithDetails = function (candidate, providedOptions) {
-    if (providedOptions === void 0) { providedOptions = {}; }
-    if (!candidate)
-        return null;
-    if (candidate.extractedMatrix) {
-        var decoded = decoder_1.decode(candidate.extractedMatrix, providedOptions);
-        if (decoded) {
-            return normalizeDetailedResult(decoded, null, null, candidate.sourceMatrix || null, {
-                location: candidate.location || null,
-                extractedMatrix: candidate.extractedMatrix,
-                version: candidate.version || null,
-                formatInfo: candidate.formatInfo || null,
-                score: candidate.score || 0,
-            });
-        }
-    }
-    if (candidate.rawData) {
-        var resumed = decoder_1.resumeDecode(candidate.rawData, providedOptions.appEncMask);
-        if (resumed) {
-            return normalizeDetailedResult(resumed, null, null, candidate.sourceMatrix || null, {
-                location: candidate.location || null,
-                extractedMatrix: candidate.extractedMatrix || null,
-                version: candidate.version || null,
-                formatInfo: candidate.formatInfo || null,
-                score: candidate.score || 0,
-            });
-        }
-    }
-    return {
-        data: candidate.data || candidate.text || null,
-        text: candidate.data || candidate.text || null,
-        binaryData: candidate.binaryData || null,
-        bytes: candidate.binaryData || null,
-        rawBytes: candidate.rawBytes || null,
-        rawCodewords: candidate.rawCodewords || candidate.rawBytes || null,
-        unmaskedCodewords: candidate.unmaskedCodewords || candidate.rawBytes || null,
-        maskedCodewords: candidate.maskedCodewords || candidate.rawCodewords || candidate.rawBytes || null,
-        chunks: [],
-        version: candidate.version || null,
-        formatInfo: candidate.formatInfo || null,
-        location: candidate.location || null,
-        corners: candidate.corners || (candidate.location && candidate.location.corners) || null,
-        matrix: candidate.sourceMatrix || null,
-        extractedMatrix: candidate.extractedMatrix || null,
-        decodeStage: "candidate-only",
-        failureReason: candidate.failureReason || null,
-        managementCode: candidate.managementCode || null,
-        managementBits: candidate.managementBits || null,
-        bitStream: candidate.bitStream || { bits: null, bytes: candidate.binaryData || null, terminator1Index: null, terminator2Index: null, userEndIndex: null, managementStartIndex: null, managementBits: candidate.managementBits || null },
-        rawData: candidate.rawData || null,
-        score: candidate.score || 0,
-    };
-};
-jsQR.decodeAppDecryptedCodewords = function (rawBytes, meta) {
-    if (meta === void 0) { meta = {}; }
-    if (!rawBytes)
-        return null;
-    var rawData = meta.rawData || (meta.version && meta.formatInfo ? {
-        codewords: rawBytes,
-        version: meta.version,
-        formatInfo: meta.formatInfo,
-    } : null);
-    if (rawData) {
-        var resumed = decoder_1.resumeDecode(rawData, null);
-        if (resumed) {
-            return {
-                data: resumed.text,
-                text: resumed.text,
-                bytes: resumed.bytes,
-                binaryData: resumed.bytes,
-                chunks: resumed.chunks || [],
-                version: resumed.version,
-                managementCode: resumed.managementCode,
-                managementBits: managementCodeToBits(resumed.managementCode),
-            };
-        }
-    }
-    try {
-        return {
-            data: decodeURIComponent(Array.prototype.map.call(rawBytes, function (b) { return "%" + ("0" + b.toString(16)).slice(-2); }).join("")),
-            text: decodeURIComponent(Array.prototype.map.call(rawBytes, function (b) { return "%" + ("0" + b.toString(16)).slice(-2); }).join("")),
-            bytes: rawBytes,
-            binaryData: rawBytes,
-            chunks: [],
-            version: meta.version || null,
-            managementCode: null,
-            managementBits: null,
-        };
-    }
-    catch (e) {
-        return {
-            data: null,
-            text: null,
-            bytes: rawBytes,
-            binaryData: rawBytes,
-            chunks: [],
-            version: meta.version || null,
-            managementCode: null,
-            managementBits: null,
-        };
-    }
 };
 exports.default = jsQR;
 
@@ -1009,17 +814,9 @@ function decodeMatrix(matrix, options) {
     if (options && options.extractRawOnly) {
         return {
             isRaw: true,
-            codewords: cloneCodewords(codewords),
-            rawCodewords: cloneCodewords(codewords),
-            unmaskedCodewords: cloneCodewords(codewords),
+            codewords: codewords,
             version: version,
-            formatInfo: formatInfo,
-            bytes: null,
-            binaryData: null,
-            chunks: [],
-            text: null,
-            managementCode: null,
-            managementBits: null,
+            formatInfo: formatInfo
         };
     }
     // ★ options から appEncMask を取り出す
@@ -1048,15 +845,7 @@ function decodeMatrix(matrix, options) {
         }
     }
     try {
-        var payload = decodeData_1.decode(resultBytes, version.versionNumber);
-        if (payload) {
-            payload.rawCodewords = cloneCodewords(codewords);
-            payload.unmaskedCodewords = cloneCodewords(codewords);
-            payload.formatInfo = formatInfo;
-            payload.version = payload.version || version;
-            payload.managementBits = managementCodeToBits(payload.managementCode);
-        }
-        return payload;
+        return decodeData_1.decode(resultBytes, version.versionNumber);
     }
     catch (_a) {
         return null;
@@ -1114,15 +903,7 @@ function resumeDecode(rawData, appMask) {
             }
         }
         // 4. 文字列へのデコード（Decode payload）
-        var payload = decodeData_1.decode(resultBytes, version.versionNumber);
-        if (payload) {
-            payload.rawCodewords = cloneCodewords(decryptedCodewords);
-            payload.unmaskedCodewords = cloneCodewords(decryptedCodewords);
-            payload.formatInfo = formatInfo;
-            payload.version = payload.version || version;
-            payload.managementBits = managementCodeToBits(payload.managementCode);
-        }
-        return payload;
+        return decodeData_1.decode(resultBytes, version.versionNumber);
     }
     catch (e) {
         return null;
