@@ -387,12 +387,24 @@ function scan(matrix, options) {
                 results.push(res); // ★ multiモードなら配列に追加して続行
             }
             else {
-                return res; // ★ 従来通り1つ目で終了
+                // multi: false だが、抽出したデータがRAW(復号失敗)だった場合、
+                // 他にもっと良い候補（正常に読める第1QR）があるかもしれないため、リターンせずに後回しにする
+                if (res.isRaw) {
+                    results.push(res);
+                } else {
+                    return res; // 正常に読めたQRがあれば即座に返す
+                }
             }
         }
     }
-    if (options && options.multi) {
-        return results.length > 0 ? results : null; // ★ multiモードなら配列を返す
+    
+    // 正常に読めたものがなく、RAW（失敗）だけが残った場合、あるいはmultiモードの場合
+    if (results.length > 0) {
+        if (options && options.multi) {
+            return results;
+        } else {
+            return results[0]; // multi:falseなら最初のRAWを返す（復号失敗時の生データ取得用）
+        }
     }
     return null;
 }
