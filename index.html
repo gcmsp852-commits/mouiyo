@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>QRツイン リーダー（改造jsQR版）</title>
+  <style>
+    :root{
+      --bg:#0f111a; --panel:#171a26; --ink:#e8eef7; --muted:#9fb0c7;
+      --accent:#00e5ff; --accent2:#7c4dff; --ok:#15c47e; --warn:#ffb020; --err:#ff5d73;
+      --line:#2a3348;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif}
+    header{padding:14px 16px;border-bottom:1px solid var(--line);background:#111522;position:sticky;top:0;z-index:10}
+    h1{margin:0;font-size:18px}
+    main{max-width:980px;margin:0 auto;padding:16px;display:grid;gap:16px}
+    .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+    .videoWrap{position:relative;width:100%;aspect-ratio:3/4;background:#000;border-radius:16px;overflow:hidden;border:1px solid var(--line)}
+    video,canvas.overlay{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+    .hidden{display:none !important}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    button{appearance:none;border:none;cursor:pointer;border-radius:12px;padding:12px 16px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#081018;font-weight:700}
+    button.secondary{background:#20283a;color:var(--ink);border:1px solid var(--line)}
+    input[type="password"],input[type="text"]{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:#0d1320;color:var(--ink)}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media (max-width:780px){.grid2{grid-template-columns:1fr}}
+    .label{font-size:12px;color:var(--muted);margin-bottom:6px}
+    .value{min-height:110px;white-space:pre-wrap;word-break:break-word;background:#0d1320;border:1px solid var(--line);border-radius:12px;padding:12px}
+    .status{font-weight:700}.ok{color:var(--ok)}.warn{color:var(--warn)}.err{color:var(--err)}
+    .small{font-size:12px;color:var(--muted)}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>QRツイン リーダー（改造jsQR版）</h1>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="row" style="justify-content:space-between">
+        <div>
+          <div class="status" id="appStatus">待機中</div>
+          <div class="small">第1QRの管理部を読み、必要なら第2QRをアプリ復号します。</div>
+        </div>
+        <div class="row">
+          <button id="startBtn">カメラ開始</button>
+          <button id="stopBtn" class="secondary">停止</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="videoWrap">
+        <video id="video" playsinline muted autoplay></video>
+        <canvas id="overlay" class="overlay"></canvas>
+      </div>
+      <canvas id="work" class="hidden"></canvas>
+    </section>
+
+    <section class="panel hidden" id="passwordPanel">
+      <div class="label">パスワード（英数字）</div>
+      <div class="row">
+        <input id="passwordInput" type="password" inputmode="latin" autocomplete="off" placeholder="英数字を入力" />
+        <button id="decryptBtn">復号する</button>
+      </div>
+      <div class="small">第1QRのアプリ暗号化ビットがONなので、第2QRの raw bytes に対して XOR 復号します。</div>
+    </section>
+
+    <section class="grid2">
+      <div class="panel">
+        <div class="label">第1QR 結果</div>
+        <div id="qr1Result" class="value mono"></div>
+      </div>
+      <div class="panel">
+        <div class="label">第2QR 結果</div>
+        <div id="qr2Result" class="value mono"></div>
+      </div>
+    </section>
+
+    <section class="grid2">
+      <div class="panel">
+        <div class="label">第1QR 管理部</div>
+        <div id="managementResult" class="value mono"></div>
+      </div>
+      <div class="panel">
+        <div class="label">デバッグ情報</div>
+        <div id="debugResult" class="value mono"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const els = {
+      video: document.getElementById('video'),
+      overlay: document.getElementById('overlay'),
+      work: document.getElementById('work'),
+      startBtn: document.getElementById('startBtn'),
+      stopBtn: document.getElementById('stopBtn'),
+      appStatus: document.getElementById('appStatus'),
+      passwordPanel: document.getElementById('passwordPanel'),
+      passwordInput: document.getElementById('passwordInput'),
+      decryptBtn: document.getElementById('decryptBtn'),
+      qr1Result: document.getElementById('qr1Result'),
+      qr2Result: document.getElementById('qr2Result'),
+      managementResult: document.getElementById('managementResult'),
+      debugResult: document.getElementById('debugResult'),
+    };
+
+const state = {
+  stream: null,
+  rafId: 0,
+  running: false,
+  starting: false,   // 追加
+  lastFrameAt: 0,
+  scanning: false,
+  latestTwin: null,
+  latestManagement: null,
+  latestSecondRaw: null,
+  latestSecondMaskNo: null,
+  latestSecondDecodeStage: null,
+};
+
+    function setStatus(text, cls='') {
+      els.appStatus.className = 'status ' + cls;
+      els.appStatus.textContent = text;
+    }
+
+    function drawPolygon(ctx, points, color, label) {
+      if (!points || points.length < 4) return;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText(label, points[0].x + 6, points[0].y - 8);
+      ctx.restore();
+    }
+
+    function fitCanvasToVideo(video, canvas) {
+      const w = video.videoWidth || 0;
+      const h = video.videoHeight || 0;
+      if (!w || !h) return false;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      return true;
+    }
+
+    function bytesToHex(bytes) {
+      return Array.from(bytes).map(v => v.toString(16).padStart(2, '0')).join('');
+    }
+
+    function bytesToUtf8(bytes) {
+      try {
+        return new TextDecoder().decode(bytes);
+      } catch {
+        return '[UTF-8変換失敗]';
+      }
+    }
+
+    function concatBytes(chunks) {
+      const total = chunks.reduce((n, a) => n + a.length, 0);
+      const out = new Uint8Array(total);
+      let off = 0;
+      for (const a of chunks) {
+        out.set(a, off);
+        off += a.length;
+      }
+      return out;
+    }
+
+    async function sha256Bytes(bytes) {
+      const digest = await crypto.subtle.digest('SHA-256', bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      return new Uint8Array(digest);
+    }
+
+    async function buildAppPatternMask(password, requiredLength) {
+      const enc = new TextEncoder();
+      let seed = enc.encode(password);
+      const chunks = [];
+      let total = 0;
+      while (total < requiredLength) {
+        seed = await sha256Bytes(seed);
+        chunks.push(seed);
+        total += seed.length;
+      }
+      return concatBytes(chunks).slice(0, requiredLength);
+    }
+
+    function xorBytes(a, mask) {
+      const out = new Uint8Array(a.length);
+      for (let i = 0; i < a.length; i++) out[i] = a[i] ^ mask[i];
+      return out;
+    }
+
+    function isAsciiAlphaNum(str) {
+      return /^[0-9A-Za-z]+$/.test(str);
+    }
+
+    function formatManagementInfo(m) {
+      if (!m) return '未取得';
+      return [
+        `rawBits: ${m.rawBits ?? ''}`,
+        `appEncrypted: ${m.appEncrypted ? '1 (ON)' : '0 (OFF)'}`,
+        `maskNumber: ${m.maskNumber ?? '(不明)'}`,
+        `terminator1Index: ${m.terminator1Index ?? '(不明)'}`,
+        `managementStart: ${m.managementStart ?? '(不明)'}`,
+        `managementEnd: ${m.managementEnd ?? '(不明)'}`,
+        `extra: ${JSON.stringify(m.extra ?? {}, null, 2)}`,
+      ].join('\n');
+    }
+
+    function formatTwinDebug(t) {
+      if (!t) return '未取得';
+      return [
+        `first found: ${!!t.first}`,
+        `first decodedText: ${!!t.first?.decodedText}`,
+        `second found: ${!!t.second}`,
+        `second decodedText: ${!!t.second?.decodedText}`,
+        `second rawBytes: ${!!t.second?.rawBytes}`,
+        `second decodeStage: ${t.second?.decodeStage ?? '(不明)'}`,
+        `second failureReason: ${t.second?.failureReason ?? '(不明)'}`,
+      ].join('\n');
+    }
+
+async function startCamera() {
+  if (state.starting) return;
+  if (state.running && state.stream && els.video.srcObject === state.stream) return;
+
+  state.starting = true;
+  setStatus('カメラ起動準備中', 'warn');
+
+  try {
+    // 既存ストリームが残っていたら明示停止
+    if (state.stream) {
+      for (const tr of state.stream.getTracks()) tr.stop();
+      state.stream = null;
+    }
+
+    state.running = false;
+    if (state.rafId) cancelAnimationFrame(state.rafId);
+    state.rafId = 0;
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      },
+      audio: false
+    });
+
+    state.stream = stream;
+
+    // ここで初めてセット
+    if (els.video.srcObject !== stream) {
+      els.video.srcObject = stream;
+    }
+
+    // metadataが来るのを待つ
+    await new Promise((resolve) => {
+      if (els.video.readyState >= 1) return resolve();
+      const onLoaded = () => {
+        els.video.removeEventListener('loadedmetadata', onLoaded);
+        resolve();
+      };
+      els.video.addEventListener('loadedmetadata', onLoaded, { once: true });
+    });
+
+    try {
+      await els.video.play();
+    } catch (e) {
+      // interrupted系を拾っても、その時点で別ロードが走っただけなので詳細表示
+      throw e;
+    }
+
+    state.running = true;
+    state.lastFrameAt = 0;
+    setStatus('カメラ起動中', 'ok');
+    tick();
+  } catch (e) {
+    state.running = false;
+    setStatus('カメラ起動失敗', 'err');
+    els.debugResult.textContent = String(e?.message || e);
+  } finally {
+    state.starting = false;
+  }
+}
+
+function stopCamera() {
+  state.running = false;
+  state.starting = false;
+
+  if (state.rafId) cancelAnimationFrame(state.rafId);
+  state.rafId = 0;
+
+  if (els.video) {
+    try { els.video.pause(); } catch {}
+  }
+
+  if (state.stream) {
+    for (const tr of state.stream.getTracks()) tr.stop();
+    state.stream = null;
+  }
+
+  if (els.video) {
+    els.video.srcObject = null;
+    // load() は呼ばない
+  }
+}
+
+    async function tick() {
+      if (!state.running) return;
+      state.rafId = requestAnimationFrame(tick);
+      if (state.scanning) return;
+      const now = performance.now();
+      if (now - state.lastFrameAt < 120) return;
+      state.lastFrameAt = now;
+
+      if (!fitCanvasToVideo(els.video, els.overlay)) return;
+      if (!fitCanvasToVideo(els.video, els.work)) return;
+
+      const wctx = els.work.getContext('2d', { willReadFrequently: true });
+      wctx.drawImage(els.video, 0, 0, els.work.width, els.work.height);
+
+      state.scanning = true;
+      try {
+        const twin = await window.QRTwinDecoder.extract(els.work);
+        renderTwin(twin);
+      } catch (e) {
+        els.debugResult.textContent = 'decode error: ' + String(e?.message || e);
+      } finally {
+        state.scanning = false;
+      }
+    }
+
+    function renderTwin(twin) {
+      const octx = els.overlay.getContext('2d');
+      octx.clearRect(0, 0, els.overlay.width, els.overlay.height);
+
+      if (!twin) {
+        setStatus('QRツイン未検出', 'warn');
+        return;
+      }
+
+      state.latestTwin = twin;
+      const first = twin.first || null;
+      const second = twin.second || null;
+      const management = first?.management || null;
+
+      state.latestManagement = management;
+      state.latestSecondRaw = second?.rawBytes || null;
+      state.latestSecondMaskNo = second?.maskNumber ?? null;
+      state.latestSecondDecodeStage = second?.decodeStage ?? null;
+
+      if (first?.corners) drawPolygon(octx, first.corners, '#00e676', 'QR1');
+      if (second?.corners) drawPolygon(octx, second.corners, '#ff5252', 'QR2');
+
+      els.qr1Result.textContent = first?.decodedText || '[第1QR 未読取]';
+      els.managementResult.textContent = formatManagementInfo(management);
+      els.debugResult.textContent = formatTwinDebug(twin);
+
+      if (second?.decodedText) {
+        els.qr2Result.textContent = second.decodedText;
+        els.passwordPanel.classList.add('hidden');
+        setStatus('第1QR・第2QRとも読取成功', 'ok');
+        return;
+      }
+
+      if (management?.appEncrypted) {
+        setStatus('第2QRは暗号化の可能性あり。パスワード待ち', 'warn');
+        els.qr2Result.textContent = '[第2QR 未復号]';
+        els.passwordPanel.classList.remove('hidden');
+      } else {
+        setStatus('第2QR 読取失敗（汚損または画像不足の可能性）', 'warn');
+        els.qr2Result.textContent = '[第2QR 読取失敗。暗号化ビットはOFF]';
+        els.passwordPanel.classList.add('hidden');
+      }
+    }
+
+    async function decryptSecondQR() {
+      const password = els.passwordInput.value.trim();
+      if (!password) return setStatus('パスワード未入力', 'err');
+      if (!isAsciiAlphaNum(password)) return setStatus('パスワードは英数字のみ', 'err');
+      if (!state.latestSecondRaw || !state.latestManagement?.appEncrypted) return setStatus('復号対象がありません', 'err');
+
+      try {
+        setStatus('第2QR 復号中', 'warn');
+        const appMask = await buildAppPatternMask(password, state.latestSecondRaw.length);
+        const decryptedRaw = xorBytes(state.latestSecondRaw, appMask);
+        const result = await window.QRTwinDecoder.decodeSecondRawAfterAppDecrypt({
+          rawBytes: decryptedRaw,
+          maskNumber: state.latestSecondMaskNo,
+          decodeStage: state.latestSecondDecodeStage,
+          firstManagement: state.latestManagement,
+        });
+        els.qr2Result.textContent = result?.decodedText || bytesToUtf8(decryptedRaw);
+        setStatus('第2QR 復号成功', 'ok');
+      } catch (e) {
+        els.qr2Result.textContent = '[復号失敗]';
+        setStatus('パスワードが違うか、データが破損しています', 'err');
+        els.debugResult.textContent += '\n復号例外: ' + String(e?.message || e);
+      }
+    }
+
+    els.startBtn.addEventListener('click', startCamera);
+    els.stopBtn.addEventListener('click', () => { stopCamera(); setStatus('停止中'); });
+    els.decryptBtn.addEventListener('click', decryptSecondQR);
+  </script>
+
+  <script>
+    /*
+      改造jsQR版の QRTwinDecoder.extract()
+      -------------------------------------------------
+      重要:
+      これは「改造jsQRが以下のAPIを持つ」前提で書いています。
+
+      window.jsQR.extractQRCandidates(imageData, width, height, options)
+        => [{ location, binaryData, rawBytes, version, formatInfo, chunk }, ...]
+
+      window.jsQR.decodeWithDetails(imageData, width, height, options)
+        => {
+             data,
+             binaryData,
+             rawBytes,
+             location,
+             version,
+             formatInfo:{ maskPattern, errorCorrectionLevel },
+             bitStream: {
+               bits: "0101...",
+               bytes: Uint8Array,
+               terminator1Index: number,
+               terminator2Index: number,
+               userEndIndex: number,
+               managementStartIndex: number,
+               managementBits: "0101010101010101"
+             },
+             rawCodewords: Uint8Array,
+             maskedCodewords: Uint8Array,
+             unmaskedCodewords: Uint8Array,
+             decodeStage: "success"
+           }
+
+      window.jsQR.decodeCandidateWithDetails(candidate, options)
+        => 同様
+
+      つまり標準jsQRそのままでは動きません。
+      あなたが今まで進めてきた「誤り訂正前データを取りたい改造jsQR」を、このAPIに合わせれば接続できます。
+    */
+
+    (function(){
+      function ensureJsQRPatched() {
+        if (!window.jsQR) throw new Error('jsQR が読み込まれていません');
+        if (typeof window.jsQR.extractQRCandidates !== 'function') {
+          throw new Error('改造jsQRの extractQRCandidates が未実装です');
+        }
+        if (typeof window.jsQR.decodeCandidateWithDetails !== 'function') {
+          throw new Error('改造jsQRの decodeCandidateWithDetails が未実装です');
+        }
+      }
+
+      function clamp(v, min, max) {
+        return Math.max(min, Math.min(max, v));
+      }
+
+      function cropImageData(srcImageData, x, y, w, h) {
+        const sx = srcImageData.width;
+        const sy = srcImageData.height;
+        x = clamp(Math.round(x), 0, sx - 1);
+        y = clamp(Math.round(y), 0, sy - 1);
+        w = clamp(Math.round(w), 1, sx - x);
+        h = clamp(Math.round(h), 1, sy - y);
+
+        const out = new ImageData(w, h);
+        const src = srcImageData.data;
+        const dst = out.data;
+        for (let row = 0; row < h; row++) {
+          const srcStart = ((y + row) * sx + x) * 4;
+          const dstStart = row * w * 4;
+          dst.set(src.subarray(srcStart, srcStart + w * 4), dstStart);
+        }
+        return out;
+      }
+
+      function pointsFromLocation(location) {
+        if (!location) return null;
+        if (location.corners && location.corners.length >= 4) return location.corners;
+        const tl = location.topLeftCorner || location.topLeft;
+        const tr = location.topRightCorner || location.topRight;
+        const br = location.bottomRightCorner || location.bottomRight;
+        const bl = location.bottomLeftCorner || location.bottomLeft;
+        if (tl && tr && br && bl) return [tl, tr, br, bl].map(p => ({ x: p.x, y: p.y }));
+        return null;
+      }
+
+      function boundsFromCorners(corners, pad = 12) {
+        const xs = corners.map(p => p.x);
+        const ys = corners.map(p => p.y);
+        const minX = Math.min(...xs) - pad;
+        const maxX = Math.max(...xs) + pad;
+        const minY = Math.min(...ys) - pad;
+        const maxY = Math.max(...ys) + pad;
+        return {
+          x: minX,
+          y: minY,
+          w: maxX - minX,
+          h: maxY - minY,
+        };
+      }
+
+      function centerOfCorners(corners) {
+        const s = corners.reduce((a, p) => ({ x: a.x + p.x, y: a.y + p.y }), { x: 0, y: 0 });
+        return { x: s.x / corners.length, y: s.y / corners.length };
+      }
+
+      function dist(a, b) {
+        const dx = a.x - b.x, dy = a.y - b.y;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+
+      function orderCandidates(cands) {
+        const arr = cands.slice();
+        arr.sort((a, b) => {
+          const sa = (a.decodedText ? 1000 : 0) + (a.hasManagement ? 300 : 0) + (a.rawBytes ? 100 : 0) + (a.score || 0);
+          const sb = (b.decodedText ? 1000 : 0) + (b.hasManagement ? 300 : 0) + (b.rawBytes ? 100 : 0) + (b.score || 0);
+          return sb - sa;
+        });
+        return arr;
+      }
+
+      function parseManagement16(rawBits) {
+        if (!rawBits || rawBits.length !== 16) {
+          return {
+            rawBits: rawBits || '',
+            appEncrypted: false,
+            maskNumber: null,
+            extra: { parseError: true }
+          };
+        }
+        return {
+          rawBits,
+          appEncrypted: rawBits[0] === '1',
+          maskNumber: parseInt(rawBits.slice(1, 4), 2),
+          extra: {
+            reserved: rawBits.slice(4)
+          }
+        };
+      }
+
+      function buildManagementFromBitStream(bitStream) {
+        if (!bitStream) return null;
+        const rawBits = bitStream.managementBits || '';
+        const parsed = parseManagement16(rawBits);
+        return {
+          ...parsed,
+          terminator1Index: bitStream.terminator1Index ?? null,
+          terminator2Index: bitStream.terminator2Index ?? null,
+          userEndIndex: bitStream.userEndIndex ?? null,
+          managementStart: bitStream.managementStartIndex ?? null,
+          managementEnd: bitStream.managementStartIndex != null ? bitStream.managementStartIndex + 16 : null,
+        };
+      }
+
+      function candidateSummaryFromDecoded(decoded) {
+        const corners = pointsFromLocation(decoded?.location);
+        const management = buildManagementFromBitStream(decoded?.bitStream);
+        return {
+          corners,
+          decodedText: decoded?.data ?? null,
+          binaryData: decoded?.binaryData ?? null,
+          rawBytes: decoded?.rawBytes ?? decoded?.unmaskedCodewords ?? decoded?.rawCodewords ?? null,
+          maskNumber: decoded?.formatInfo?.maskPattern ?? management?.maskNumber ?? null,
+          decodeStage: decoded?.decodeStage ?? (decoded?.data ? 'success' : 'unknown'),
+          failureReason: decoded?.failureReason ?? null,
+          version: decoded?.version ?? null,
+          management,
+          hasManagement: !!management?.rawBits,
+          score: decoded?.score ?? 0,
+        };
+      }
+
+      function collectCandidatesFromFrame(imageData) {
+        const rough = window.jsQR.extractQRCandidates(imageData, imageData.width, imageData.height, {
+          inversionAttempts: 'dontInvert',
+          multi: true,
+          returnDetailedScanResult: true,
+          returnRawCodewords: true,
+          returnBitStream: true,
+          allowPartial: true,
+        }) || [];
+
+        const list = [];
+        for (const cand of rough) {
+          let decoded = null;
+          try {
+            decoded = window.jsQR.decodeCandidateWithDetails(cand, {
+              returnRawCodewords: true,
+              returnBitStream: true,
+              allowPartial: true,
+              extractManagement16: true,
+              continueAfterFirstTerminator: true,
+            });
+          } catch (e) {
+            decoded = {
+              data: null,
+              location: cand.location || null,
+              rawBytes: cand.rawBytes || cand.binaryData || null,
+              decodeStage: 'decodeCandidateWithDetails_failed',
+              failureReason: String(e?.message || e),
+              score: cand.score || 0,
+              formatInfo: cand.formatInfo || null,
+              version: cand.version || null,
+            };
+          }
+          list.push(candidateSummaryFromDecoded(decoded));
+        }
+        return list;
+      }
+
+      function chooseTwinPair(candidates) {
+        if (!candidates || candidates.length === 0) return { first: null, second: null };
+        const ordered = orderCandidates(candidates);
+        const first = ordered[0] || null;
+        if (ordered.length === 1) return { first, second: null };
+
+        const firstCenter = first?.corners ? centerOfCorners(first.corners) : null;
+        let second = null;
+        let best = -Infinity;
+
+        for (let i = 1; i < ordered.length; i++) {
+          const c = ordered[i];
+          let score = 0;
+          if (c.rawBytes) score += 100;
+          if (c.decodedText) score += 30;
+          if (c.corners && firstCenter) {
+            const d = dist(firstCenter, centerOfCorners(c.corners));
+            score += Math.min(400, d);
+          }
+          if (score > best) {
+            best = score;
+            second = c;
+          }
+        }
+        return { first, second };
+      }
+
+      function tryDecodeMissingSideByCrop(imageData, known, usedSecond) {
+        if (!known?.corners) return null;
+        const b = boundsFromCorners(known.corners, 24);
+        const sideW = b.w;
+        const sideH = b.h;
+        const cx = (b.x + b.w / 2);
+        const cy = (b.y + b.h / 2);
+
+        const guesses = [
+          { x: b.x - sideW * 1.05, y: b.y },
+          { x: b.x + sideW * 1.05, y: b.y },
+          { x: b.x, y: b.y - sideH * 1.05 },
+          { x: b.x, y: b.y + sideH * 1.05 },
+          { x: cx - sideW / 2, y: cy - sideH / 2 },
+        ];
+
+        let best = null;
+        for (const g of guesses) {
+          try {
+            const roi = cropImageData(imageData, g.x, g.y, sideW, sideH);
+            const cands = collectCandidatesFromFrame(roi);
+            for (const c of cands) {
+              if (c.corners) {
+                c.corners = c.corners.map(p => ({ x: p.x + Math.round(g.x), y: p.y + Math.round(g.y) }));
+              }
+            }
+            const ordered = orderCandidates(cands);
+            const found = ordered.find(c => !usedSecond || JSON.stringify(c.corners) !== JSON.stringify(usedSecond.corners));
+            if (found) {
+              if (!best || (found.rawBytes && !best.rawBytes) || (found.decodedText && !best.decodedText)) {
+                best = found;
+              }
+            }
+          } catch {}
+        }
+        return best;
+      }
+
+      async function extract(canvas) {
+        ensureJsQRPatched();
+
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        let candidates = collectCandidatesFromFrame(imageData);
+        let { first, second } = chooseTwinPair(candidates);
+
+        if (first && !second) {
+          second = tryDecodeMissingSideByCrop(imageData, first, null);
+        }
+
+        if (!first && second) {
+          first = second;
+          second = null;
+        }
+
+        if (!first) return null;
+
+        if (!second) {
+          second = {
+            corners: null,
+            decodedText: null,
+            binaryData: null,
+            rawBytes: null,
+            maskNumber: null,
+            decodeStage: 'not-found',
+            failureReason: 'second-qr-not-detected',
+            version: null,
+            management: null,
+            hasManagement: false,
+            score: 0,
+          };
+        }
+
+        if (!first.management && first.decodedText) {
+          // 第1候補に管理部がない場合、中央高精度再decodeを1回試す
+          const b = boundsFromCorners(first.corners || [
+            { x: 0, y: 0 }, { x: canvas.width, y: 0 }, { x: canvas.width, y: canvas.height }, { x: 0, y: canvas.height }
+          ], 18);
+          try {
+            const roi = cropImageData(imageData, b.x, b.y, b.w, b.h);
+            const decoded = window.jsQR.decodeWithDetails(roi, roi.width, roi.height, {
+              inversionAttempts: 'dontInvert',
+              returnRawCodewords: true,
+              returnBitStream: true,
+              allowPartial: true,
+              extractManagement16: true,
+              continueAfterFirstTerminator: true,
+            });
+            const retry = candidateSummaryFromDecoded(decoded);
+            if (retry) {
+              if (retry.corners) retry.corners = retry.corners.map(p => ({ x: p.x + Math.round(b.x), y: p.y + Math.round(b.y) }));
+              first = { ...first, ...retry, management: retry.management || first.management };
+            }
+          } catch {}
+        }
+
+        // 第2が通常読取失敗でも rawBytes を優先保持
+        if (!second.decodedText && !second.rawBytes && second.corners) {
+          const b = boundsFromCorners(second.corners, 18);
+          try {
+            const roi = cropImageData(imageData, b.x, b.y, b.w, b.h);
+            const decoded = window.jsQR.decodeWithDetails(roi, roi.width, roi.height, {
+              inversionAttempts: 'dontInvert',
+              returnRawCodewords: true,
+              returnBitStream: true,
+              allowPartial: true,
+              extractManagement16: false,
+              continueAfterDecodeFailure: true,
+            });
+            const retry = candidateSummaryFromDecoded(decoded);
+            if (retry.corners) retry.corners = retry.corners.map(p => ({ x: p.x + Math.round(b.x), y: p.y + Math.round(b.y) }));
+            second = {
+              ...second,
+              rawBytes: retry.rawBytes || second.rawBytes,
+              maskNumber: retry.maskNumber ?? second.maskNumber,
+              decodeStage: retry.decodeStage || second.decodeStage,
+              failureReason: retry.failureReason || second.failureReason,
+              version: retry.version || second.version,
+            };
+          } catch (e) {
+            second.failureReason = second.failureReason || String(e?.message || e);
+          }
+        }
+
+        return { first, second };
+      }
+
+      async function decodeSecondRawAfterAppDecrypt({ rawBytes }) {
+        // ここは本来「復号後の codewords を bitstream / data bytes に戻す」改造jsQR APIに繋ぐのが本命。
+        // ただし、そのAPI名はまだあなたの改造内容次第なので、段階的に置いてある。
+        if (window.jsQR && typeof window.jsQR.decodeAppDecryptedCodewords === 'function') {
+          const decoded = await window.jsQR.decodeAppDecryptedCodewords(rawBytes, {
+            assumeByteMode: true,
+            allowPartial: false,
+          });
+          return {
+            decodedText: decoded?.data ?? '[復号後再decode失敗]'
+          };
+        }
+        return {
+          decodedText: bytesToUtf8(rawBytes)
+        };
+      }
+
+      window.QRTwinDecoder = {
+        extract,
+        decodeSecondRawAfterAppDecrypt,
+      };
+    })();
+  </script>
+
+  <!--
+    ここで改造jsQR本体を読み込んでください。
+    例:
+    <script src="./jsQR.js"></script>
+
+    重要:
+    このHTML単体では、改造jsQRの内部実装までは含んでいません。
+    理由は、標準jsQRには存在しない以下APIが必要だからです。
+
+    1) extractQRCandidates
+    2) decodeCandidateWithDetails
+    3) decodeWithDetails
+    4) (将来) decodeAppDecryptedCodewords
+
+    つまり今回のコードは、あなたの改造jsQRに対してそのまま接続できる
+    QRTwinDecoder.extract() の完成形です。
+  -->
+</body>
+</html>
