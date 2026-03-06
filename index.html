@@ -1,247 +1,755 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Vanilla jsQR Diagnostic Test</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #121212;
-            color: #ffffff;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            height: 100vh;
-        }
-        
-        .header {
-            width: 100%;
-            padding: 15px;
-            background-color: #1e1e1e;
-            text-align: center;
-            font-size: 1.2rem;
-            font-weight: bold;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
-            z-index: 10;
-        }
-
-        .camera-container {
-            position: relative;
-            width: 100%;
-            flex: 1;
-            background-color: #000;
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        #camera {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: contain; /* スマホ上で歪まないようにする */
-            z-index: 1;
-        }
-
-        #overlayCanvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            pointer-events: none;
-            z-index: 2;
-        }
-
-        /* jsQR用の隠しキャンバス（描画しない） */
-        #zxingCanvas {
-            display: none;
-        }
-
-        .result-panel {
-            width: 100%;
-            padding: 20px;
-            background-color: #1e1e1e;
-            box-sizing: border-box;
-            text-align: center;
-            min-height: 150px;
-            z-index: 10;
-            box-shadow: 0 -2px 10px rgba(0,0,0,0.5);
-        }
-
-        #resultText {
-            font-size: 1.5rem;
-            color: #4CAF50;
-            word-break: break-all;
-            margin-bottom: 10px;
-            font-weight: bold;
-        }
-        
-        button {
-            background-color: #2196F3;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            font-size: 1.1rem;
-            border-radius: 8px;
-            cursor: pointer;
-            margin-top: 10px;
-        }
-        button:active {
-            background-color: #1976D2;
-        }
-
-        .notice {
-            color: #ff9800;
-            font-size: 0.9rem;
-            margin-bottom: 10px;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>QRツイン リーダー</title>
+  <meta name="apple-mobile-web-app-title" content="QRツイン">
+  <meta name="application-name" content="QRツイン">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#121212">
+  <link rel="apple-touch-icon" sizes="180x180" href="icon.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon.png">
+  <link rel="manifest" href="manifest.json">
+  <script src="./jsQR_architecture.js"></script>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #121212; color: #ffffff; text-align: center; }
+    h2 { margin: 15px 0; font-size: 1.2rem; }
+    #startScreen, #resultScreen { padding: 20px; margin-top: 50px; }
+    #resultScreen { display: none; }
+    .camera-container { position: relative; width: 100%; max-width: 600px; margin: 0 auto; background: #000; display: none; }
+    video { width: 100%; display: block; object-fit: cover; }
+    canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+    .status-panel { padding: 15px; background: #1e1e1e; border-top: 1px solid #333; text-align: left; max-width: 600px; margin: 0 auto; display: none; }
+    .qr-result { margin-bottom: 10px; padding: 10px; border-radius: 8px; background: #2c2c2c; word-break: break-all; }
+    .qr-1 { border-left: 5px solid #00E676; }
+    .qr-2 { border-left: 5px solid #29B6F6; }
+    button { width: 100%; max-width: 300px; padding: 15px; font-size: 1.1rem; font-weight: bold; background: #6200EE; color: white; border: none; border-radius: 8px; cursor: pointer; margin-top: 10px; }
+    button:disabled { background: #555; cursor: not-allowed; color: #aaa; }
+    #startBtn { background: #81C784; color: #121212; }
+    #startBtn:active { background: #66BB6A; }
+    #backBtn { background: #03DAC6; color: #000; margin-top: 30px; }
+    #backBtn:active { background: #018786; }
+    .smallInfo { font-size: 0.82rem; color: #9ecfff; margin: 6px 0 0; }
+  </style>
 </head>
 <body>
-
-    <div class="header">Vanilla jsQR Scanner</div>
-    
-    <div class="camera-container">
-        <!-- 映像表示用 -->
-        <video id="camera" playsinline autoplay muted></video>
-        <!-- 枠描画用 -->
-        <canvas id="overlayCanvas"></canvas>
+  <div id="passwordScreen" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; justify-content:center; align-items:center;">
+    <div style="background:#1e1e1e; padding:20px; border-radius:8px; width:80%; max-width:400px; text-align:center; border:1px solid #333;">
+      <h3 style="color:#03DAC6; margin-top:0;">🔒 パスワード入力</h3>
+      <p style="font-size:0.9rem; color:#aaa; margin-bottom:20px;">
+        暗号化されたQRツインを検出しました。<br>復号するためのパスワードを入力してください。
+      </p>
+      <input type="password" id="appPasswordInput" placeholder="パスワード" style="width:100%; padding:12px; margin-bottom:15px; border-radius:4px; border:1px solid #555; background:#2c2c2c; color:#fff; box-sizing:border-box; font-size:1rem;">
+      <button onclick="submitPassword()" style="background:#00E676; color:#000; width:100%; padding:12px; border-radius:8px; font-weight:bold; font-size:1.1rem; border:none;">一瞬で復号する</button>
+      <button onclick="cancelPassword()" style="background:#555; color:#fff; width:100%; padding:12px; border-radius:8px; font-weight:bold; font-size:1rem; border:none; margin-top:10px;">キャンセル</button>
     </div>
+  </div>
 
-    <!-- jsQR解析用（隠し） -->
-    <canvas id="zxingCanvas"></canvas>
+  <h2>📱 QRツイン リーダー</h2>
 
-    <div class="result-panel">
-        <div class="notice">純粋な jsQR の読み取りテストモードです（QRツインの暗号化ロジックは無効化されています）</div>
-        <div id="resultText">スキャン中...</div>
-        <button id="startBtn">カメラ起動</button>
+  <div id="startScreen">
+    <p style="color:#aaa; font-size:0.9rem; margin-bottom:20px;">2つのQRコードを同時に、または連続して読み取ります。</p>
+    <button id="startBtn" onclick="startApp()">📷 カメラを起動する</button>
+  </div>
+
+  <div class="camera-container" id="cameraContainer">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="overlayCanvas"></canvas>
+  </div>
+
+  <div class="status-panel" id="statusPanel">
+    <div id="detectorInfo" style="font-size:0.8rem; color:#03DAC6; font-weight:bold; margin-bottom:10px;">⚡ エンジン: 初期化前</div>
+    <div id="archInfo" class="smallInfo">search → track ROI → 必要時のみ復号</div>
+    <div class="qr-result qr-1">
+      <strong>1個目:</strong> <span id="text1">未検出</span><br>
+      <span style="font-size:0.85em; color:#ccc;">管理部16bit: <span id="mg1">--</span></span>
     </div>
+    <div class="qr-result qr-2">
+      <strong>2個目:</strong> <span id="text2">未検出</span><br>
+      <span style="font-size:0.85em; color:#ccc;">管理部16bit: <span id="mg2">--</span></span>
+    </div>
+  </div>
 
-    <!-- 純正の jsQR ライブラリを読み込み -->
-    <script src="jsQR.js"></script>
+  <div id="resultScreen">
+    <h3 style="color:#00E676; margin-bottom:20px;">✅ 読み取り完了！</h3>
+    <div class="qr-result qr-1" style="text-align:left;">
+      <strong>1個目:</strong><br> <span id="finalText1"></span><br>
+      <span style="font-size:0.9em; color:#ffeb3b;">管理部16bit: <span id="finalMg1">--</span></span>
+    </div>
+    <div class="qr-result qr-2" style="text-align:left;">
+      <strong>2個目:</strong><br> <span id="finalText2"></span><br>
+      <span style="font-size:0.9em; color:#ffeb3b;">管理部16bit: <span id="finalMg2">--</span></span>
+    </div>
+    <button id="backBtn" onclick="goBack()">🔙 もとのカメラ画面に戻る</button>
+  </div>
 
-    <script>
-        const video = document.getElementById('camera');
-        const overlayCanvas = document.getElementById('overlayCanvas');
-        const ctx = overlayCanvas.getContext('2d', { willReadFrequently: true });
-        
-        const zxingCanvas = document.getElementById('zxingCanvas');
-        const zxingCtx = zxingCanvas.getContext('2d', { willReadFrequently: true });
-        
-        const resultText = document.getElementById('resultText');
-        const startBtn = document.getElementById('startBtn');
+<script>
+function sha256Bytes(msgBytes){
+  const K = new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
+  function rotr(x,n){ return (x>>>n) | (x<<(32-n)); } function ch(x,y,z){ return (x & y) ^ (~x & z); } function maj(x,y,z){ return (x & y) ^ (x & z) ^ (y & z); } function s0(x){ return rotr(x,7) ^ rotr(x,18) ^ (x>>>3); } function s1(x){ return rotr(x,17) ^ rotr(x,19) ^ (x>>>10); } function S0(x){ return rotr(x,2) ^ rotr(x,13) ^ rotr(x,22); } function S1(x){ return rotr(x,6) ^ rotr(x,11) ^ rotr(x,25); }
+  const ml = msgBytes.length; const bitLenHi = Math.floor((ml * 8) / 0x100000000); const bitLenLo = (ml * 8) >>> 0; const withOne = ml + 1; let padLen = (withOne % 64 <= 56) ? (56 - (withOne % 64)) : (56 + 64 - (withOne % 64)); const totalLen = withOne + padLen + 8; const m = new Uint8Array(totalLen); m.set(msgBytes, 0); m[ml] = 0x80; const dv = new DataView(m.buffer); dv.setUint32(totalLen - 8, bitLenHi, false); dv.setUint32(totalLen - 4, bitLenLo, false);
+  let a=0x6a09e667,b=0xbb67ae85,c=0x3c6ef372,d=0xa54ff53a,e=0x510e527f,f=0x9b05688c,g=0x1f83d9ab,h=0x5be0cd19; const W = new Uint32Array(64);
+  for(let off=0; off<m.length; off+=64){ for(let i=0;i<16;i++) W[i]=dv.getUint32(off+i*4,false); for(let i=16;i<64;i++) W[i]=(s1(W[i-2]) + W[i-7] + s0(W[i-15]) + W[i-16])>>>0; let A=a,B=b,C=c,D=d,E=e,F=f,G=g,H=h; for(let i=0;i<64;i++){ const t1=(H + S1(E) + ch(E,F,G) + K[i] + W[i])>>>0; const t2=(S0(A) + maj(A,B,C))>>>0; H=G;G=F;F=E;E=(D + t1)>>>0;D=C;C=B;B=A;A=(t1 + t2)>>>0; } a=(a+A)>>>0;b=(b+B)>>>0;c=(c+C)>>>0;d=(d+D)>>>0;e=(e+E)>>>0;f=(f+F)>>>0;g=(g+G)>>>0;h=(h+H)>>>0; }
+  const out = new Uint8Array(32); const odv = new DataView(out.buffer); odv.setUint32(0,a,false);odv.setUint32(4,b,false);odv.setUint32(8,c,false);odv.setUint32(12,d,false);odv.setUint32(16,e,false);odv.setUint32(20,f,false);odv.setUint32(24,g,false);odv.setUint32(28,h,false); return out;
+}
+function utf8Bytes(str){ return new TextEncoder().encode(String(str ?? "")); }
+function deriveEncryptionMaskBytes(password, neededBytes){
+  const out = new Uint8Array(neededBytes); let filled = 0; let h = sha256Bytes(utf8Bytes(password));
+  while (filled < neededBytes) { const take = Math.min(32, neededBytes - filled); out.set(h.subarray(0, take), filled); filled += take; if (filled >= neededBytes) break; h = sha256Bytes(h); }
+  return out;
+}
 
-        let isScanning = false;
-        let animationId = null;
+const video = document.getElementById('video');
+const overlayCanvas = document.getElementById('overlayCanvas');
+const ctx = overlayCanvas.getContext('2d');
 
-        // 枠を描画する関数
-        const drawLine = (begin, end, color) => {
-            ctx.beginPath();
-            ctx.moveTo(begin.x, begin.y);
-            ctx.lineTo(end.x, end.y);
-            ctx.lineWidth = 4;
-            ctx.strokeStyle = color;
-            ctx.stroke();
-        };
+const fullCanvas = document.createElement('canvas');
+const fullCtx = fullCanvas.getContext('2d', { willReadFrequently: true });
 
-        const drawBoundingBox = (location, color) => {
-            if (!location) return;
-            drawLine(location.topLeftCorner, location.topRightCorner, color);
-            drawLine(location.topRightCorner, location.bottomRightCorner, color);
-            drawLine(location.bottomRightCorner, location.bottomLeftCorner, color);
-            drawLine(location.bottomLeftCorner, location.topLeftCorner, color);
-        };
+const searchCanvas = document.createElement('canvas');
+const searchCtx = searchCanvas.getContext('2d', { willReadFrequently: true });
 
-        // カメラ起動処理
-        async function startCamera() {
-            try {
-                resultText.innerText = "カメラをリクエスト中...";
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
-                });
-                
-                video.srcObject = stream;
-                
-                // Safari用のおまじない
-                video.setAttribute("playsinline", true);
-                
-                // ビデオの読み込みを待つ
-                await new Promise((resolve) => {
-                    video.onloadeddata = () => {
-                        resolve();
-                    };
-                    // iOS safari等でonloadeddataが発火しない場合のフェイルセーフ
-                    setTimeout(resolve, 1500);
-                });
-                
-                try {
-                    await video.play();
-                } catch (playErr) {
-                    console.warn("自動再生エラー:", playErr);
-                    resultText.innerText = "再生エラー: 画面をタップしてください";
-                    return;
-                }
+const roiCanvas = document.createElement('canvas');
+const roiCtx = roiCanvas.getContext('2d', { willReadFrequently: true });
 
-                startBtn.style.display = 'none';
-                isScanning = true;
-                resultText.innerText = "スキャン待機中...";
-                animationId = requestAnimationFrame(scanLoop);
-                
-            } catch (err) {
-                resultText.innerText = "カメラエラー: " + err.name + " " + err.message;
-                resultText.style.color = "#ff4444";
-                alert("カメラを起動できませんでした。\n" + err.message);
-            }
-        }
+const state = {
+  stream: null,
+  running: false,
+  starting: false,
+  rafId: 0,
+  mode: 'search', // search | track | password | paused
+  detector: null,
+  detectorName: 'jsQR ROI fallback',
+  lastProcessAt: 0,
+  searchInterval: 220,
+  trackInterval: 90,
+  qr1: null,
+  qr2: null,
+  lastSearchCandidates: [],
+  appPassword: null,
+  appMask: null,
+  lostCount: 0,
+  maxLost: 4,
+  searchScale: 960,
+};
 
-        startBtn.addEventListener('click', startCamera);
+function setDetectorInfo(text) {
+  document.getElementById('detectorInfo').textContent = text;
+}
 
-        // スキャンループ
-        function scanLoop() {
-            if (!isScanning) return;
+function setTexts(q1Text, q2Text, mg1, mg2) {
+  document.getElementById('text1').textContent = q1Text ?? '未検出';
+  document.getElementById('text2').textContent = q2Text ?? '未検出';
+  document.getElementById('mg1').textContent = mg1 ?? '--';
+  document.getElementById('mg2').textContent = mg2 ?? '--';
+}
 
-            // キャンバスサイズをビデオに合わせる
-            if (video.videoWidth && overlayCanvas.width !== video.videoWidth) {
-                overlayCanvas.width = video.videoWidth;
-                overlayCanvas.height = video.videoHeight;
-                zxingCanvas.width = video.videoWidth;
-                zxingCanvas.height = video.videoHeight;
-            }
+function clonePoint(p){ return p ? { x: p.x, y: p.y } : null; }
 
-            if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-                
-                // 画像を解析用キャンバスに描画
-                zxingCtx.drawImage(video, 0, 0, zxingCanvas.width, zxingCanvas.height);
-                const imageData = zxingCtx.getImageData(0, 0, zxingCanvas.width, zxingCanvas.height);
-                
-                // 純正 jsQR 呼び出し (attemptBoth で白黒反転にも対応)
-                const code = jsQR(imageData.data, imageData.width, imageData.height, {
-                    inversionAttempts: "attemptBoth",
-                });
+function getLocationPoints(location) {
+  if (!location) return [];
+  if (location.corners && location.corners.length >= 4) return location.corners.map(clonePoint);
+  const tl = location.topLeftCorner || location.topLeft;
+  const tr = location.topRightCorner || location.topRight;
+  const br = location.bottomRightCorner || location.bottomRight;
+  const bl = location.bottomLeftCorner || location.bottomLeft;
+  return [tl, tr, br, bl].filter(Boolean).map(clonePoint);
+}
 
-                if (code) {
-                    drawBoundingBox(code.location, '#00FF00'); // 緑の枠
-                    if (code.data !== "") {
-                        resultText.innerText = "読取成功: " + code.data;
-                        resultText.style.color = "#00FF00";
-                    }
-                } else {
-                    // resultText.innerText = "スキャン中...";
-                    // resultText.style.color = "#ffffff";
-                }
-            }
+function pointsToBounds(points, pad = 0) {
+  if (!points || !points.length) return null;
+  const xs = points.map(p => p.x);
+  const ys = points.map(p => p.y);
+  const minX = Math.min(...xs) - pad;
+  const maxX = Math.max(...xs) + pad;
+  const minY = Math.min(...ys) - pad;
+  const maxY = Math.max(...ys) + pad;
+  return { x:minX, y:minY, w:maxX-minX, h:maxY-minY };
+}
 
-            animationId = requestAnimationFrame(scanLoop);
-        }
-    </script>
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function clampBounds(b, maxW, maxH) {
+  const x = clamp(Math.round(b.x), 0, Math.max(0, maxW - 1));
+  const y = clamp(Math.round(b.y), 0, Math.max(0, maxH - 1));
+  const w = clamp(Math.round(b.w), 1, Math.max(1, maxW - x));
+  const h = clamp(Math.round(b.h), 1, Math.max(1, maxH - y));
+  return { x, y, w, h };
+}
+
+function expandBounds(bounds, margin, maxW, maxH) {
+  return clampBounds({
+    x: bounds.x - margin,
+    y: bounds.y - margin,
+    w: bounds.w + margin * 2,
+    h: bounds.h + margin * 2,
+  }, maxW, maxH);
+}
+
+function getCenter(points) {
+  if (!points || !points.length) return { x:0, y:0 };
+  let x = 0, y = 0;
+  for (const p of points) { x += p.x; y += p.y; }
+  return { x: x / points.length, y: y / points.length };
+}
+
+function distance(a, b) {
+  const dx = a.x - b.x, dy = a.y - b.y;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+
+function managementCodeToBits(code) {
+  if (typeof code !== 'number' || !Number.isFinite(code)) return null;
+  return (code >>> 0).toString(2).padStart(16, '0').slice(-16);
+}
+
+function parseManagement(bitsOrCode) {
+  const bits = typeof bitsOrCode === 'string' ? bitsOrCode : managementCodeToBits(bitsOrCode);
+  if (!bits || bits.length !== 16) return { bits: null, appEncrypted: false, maskNumber: null };
+  return {
+    bits,
+    appEncrypted: bits[0] === '1',
+    maskNumber: parseInt(bits.slice(1, 4), 2),
+  };
+}
+
+function mapPoints(points, scaleX, scaleY, offsetX = 0, offsetY = 0) {
+  return (points || []).map(p => ({ x: p.x * scaleX + offsetX, y: p.y * scaleY + offsetY }));
+}
+
+function drawPolygon(points, color, label) {
+  if (!points || points.length < 4) return;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText(label, points[0].x + 6, points[0].y - 8);
+  ctx.restore();
+}
+
+function drawRoi(bounds, color, label) {
+  if (!bounds) return;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.setLineDash([8, 6]);
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bounds.x, bounds.y, bounds.w, bounds.h);
+  ctx.setLineDash([]);
+  ctx.fillStyle = color;
+  ctx.font = '14px sans-serif';
+  ctx.fillText(label, bounds.x + 6, bounds.y + 18);
+  ctx.restore();
+}
+
+function clearOverlay() {
+  ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+}
+
+function updateOverlay() {
+  clearOverlay();
+  if (state.qr1?.points) drawPolygon(state.qr1.points, '#00E676', 'QR1');
+  if (state.qr2?.points) drawPolygon(state.qr2.points, '#29B6F6', 'QR2');
+  if (state.qr1?.roi) drawRoi(state.qr1.roi, 'rgba(0,230,118,0.8)', 'ROI1');
+  if (state.qr2?.roi) drawRoi(state.qr2.roi, 'rgba(41,182,246,0.8)', 'ROI2');
+}
+
+function fitToVideo() {
+  const w = video.videoWidth || 0;
+  const h = video.videoHeight || 0;
+  if (!w || !h) return false;
+  if (overlayCanvas.width !== w || overlayCanvas.height !== h) {
+    overlayCanvas.width = w;
+    overlayCanvas.height = h;
+    fullCanvas.width = w;
+    fullCanvas.height = h;
+  }
+  return true;
+}
+
+function prepareSearchCanvas() {
+  const fullW = fullCanvas.width;
+  const fullH = fullCanvas.height;
+  const scale = Math.min(1, state.searchScale / Math.max(fullW, fullH));
+  searchCanvas.width = Math.max(1, Math.round(fullW * scale));
+  searchCanvas.height = Math.max(1, Math.round(fullH * scale));
+  searchCtx.drawImage(fullCanvas, 0, 0, searchCanvas.width, searchCanvas.height);
+  return { scaleX: fullW / searchCanvas.width, scaleY: fullH / searchCanvas.height };
+}
+
+function imageDataFromCanvas(canvas, ctx2) {
+  return ctx2.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function cropFullToRoi(bounds) {
+  const b = clampBounds(bounds, fullCanvas.width, fullCanvas.height);
+  roiCanvas.width = b.w;
+  roiCanvas.height = b.h;
+  roiCtx.clearRect(0, 0, b.w, b.h);
+  roiCtx.drawImage(fullCanvas, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h);
+  return { bounds: b, imageData: imageDataFromCanvas(roiCanvas, roiCtx) };
+}
+
+function candidateScore(c) {
+  const mg = c.management?.bits ? 300 : 0;
+  const text = c.text ? 1000 : 0;
+  const raw = c.rawBytes ? 120 : 0;
+  return text + mg + raw + (c.score || 0);
+}
+
+function normalizeCandidate(detail, offsetX = 0, offsetY = 0, scaleX = 1, scaleY = 1) {
+  if (!detail) return null;
+  const rawPts = detail.corners || getLocationPoints(detail.location);
+  const points = mapPoints(rawPts, scaleX, scaleY, offsetX, offsetY);
+  const rawBytes = detail.rawBytes || detail.rawCodewords || detail.unmaskedCodewords || null;
+  const managementBits = detail.managementBits || detail.bitStream?.managementBits || managementCodeToBits(detail.managementCode);
+  const management = parseManagement(managementBits);
+  return {
+    text: detail.data || detail.text || null,
+    managementCode: detail.managementCode ?? null,
+    management,
+    points,
+    center: getCenter(points),
+    bounds: pointsToBounds(points, 0),
+    version: detail.version || detail.rawData?.version || null,
+    formatInfo: detail.formatInfo || detail.rawData?.formatInfo || null,
+    rawBytes: rawBytes ? Uint8Array.from(rawBytes) : null,
+    rawData: detail.rawData || (rawBytes && detail.version && detail.formatInfo ? { codewords: Array.from(rawBytes), version: detail.version, formatInfo: detail.formatInfo } : null),
+    decodeStage: detail.decodeStage || null,
+    score: detail.score || 0,
+  };
+}
+
+function decodeFromImageData(imgData, offsetX = 0, offsetY = 0, scaleX = 1, scaleY = 1) {
+  let results = [];
+  try {
+    const cands = jsQR.extractQRCandidates(imgData, imgData.width, imgData.height, {
+      inversionAttempts: 'dontInvert',
+      allowPartial: true,
+      returnRawCodewords: true,
+      returnBitStream: true
+    }) || [];
+    for (const cand of cands) {
+      const detail = jsQR.decodeCandidateWithDetails(cand, {
+        allowPartial: true,
+        returnRawCodewords: true,
+        returnBitStream: true,
+        extractManagement16: true,
+        continueAfterFirstTerminator: true,
+      }) || cand;
+      const normalized = normalizeCandidate(detail, offsetX, offsetY, scaleX, scaleY);
+      if (normalized) results.push(normalized);
+    }
+  } catch (e) {
+    console.warn('extractQRCandidates failed', e);
+  }
+  if (!results.length) {
+    try {
+      const detail = jsQR.decodeWithDetails(imgData, imgData.width, imgData.height, {
+        inversionAttempts: 'dontInvert',
+        allowPartial: true,
+        returnRawCodewords: true,
+        returnBitStream: true,
+        extractManagement16: true,
+        continueAfterFirstTerminator: true,
+      });
+      const normalized = normalizeCandidate(detail, offsetX, offsetY, scaleX, scaleY);
+      if (normalized) results.push(normalized);
+    } catch (e) {
+      console.warn('decodeWithDetails failed', e);
+    }
+  }
+  return results.sort((a,b) => candidateScore(b) - candidateScore(a));
+}
+
+async function detectWithBarcodeDetectorOnSearch(scaleX, scaleY) {
+  if (!state.detector) return [];
+  try {
+    const found = await state.detector.detect(searchCanvas);
+    const list = [];
+    for (const item of found) {
+      const cp = Array.isArray(item.cornerPoints) ? item.cornerPoints : null;
+      let points;
+      if (cp && cp.length >= 4) {
+        points = cp.map(p => ({ x: p.x * scaleX, y: p.y * scaleY }));
+      } else if (item.boundingBox) {
+        const b = item.boundingBox;
+        points = [
+          { x: b.x * scaleX, y: b.y * scaleY },
+          { x: (b.x + b.width) * scaleX, y: b.y * scaleY },
+          { x: (b.x + b.width) * scaleX, y: (b.y + b.height) * scaleY },
+          { x: b.x * scaleX, y: (b.y + b.height) * scaleY },
+        ];
+      } else {
+        continue;
+      }
+      const b = expandBounds(pointsToBounds(points, 0), 18, fullCanvas.width, fullCanvas.height);
+      const roi = cropFullToRoi(b);
+      const decoded = decodeFromImageData(roi.imageData, roi.bounds.x, roi.bounds.y, 1, 1);
+      if (decoded.length) {
+        list.push(decoded[0]);
+      } else {
+        list.push({
+          text: item.rawValue || null,
+          management: { bits: null, appEncrypted: false, maskNumber: null },
+          managementCode: null,
+          points,
+          center: getCenter(points),
+          bounds: pointsToBounds(points, 0),
+          rawBytes: null,
+          rawData: null,
+          version: null,
+          formatInfo: null,
+          decodeStage: 'detector-only',
+          score: 10,
+        });
+      }
+    }
+    return list;
+  } catch (e) {
+    console.warn('BarcodeDetector detect failed', e);
+    return [];
+  }
+}
+
+function chooseBestPair(candidates) {
+  if (!candidates.length) return { first:null, second:null };
+  const ordered = candidates.slice().sort((a,b) => candidateScore(b) - candidateScore(a));
+  const first = ordered[0];
+  if (ordered.length === 1) return { first, second:null };
+  const c1 = first.center;
+  let best = null;
+  let bestScore = -Infinity;
+  for (let i = 1; i < ordered.length; i++) {
+    const c = ordered[i];
+    const d = distance(c1, c.center);
+    let score = candidateScore(c) + Math.min(500, d);
+    const a1 = Math.max(1, first.bounds?.w * first.bounds?.h || 1);
+    const a2 = Math.max(1, c.bounds?.w * c.bounds?.h || 1);
+    const ratio = a1 > a2 ? a1 / a2 : a2 / a1;
+    if (ratio > 5) score -= 200;
+    if (d < 30) score -= 300;
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return { first, second:best };
+}
+
+function applyTrackState(first, second) {
+  state.qr1 = first ? withRoi(first, 26) : null;
+  state.qr2 = second ? withRoi(second, 26) : null;
+  state.lostCount = 0;
+  updateOverlay();
+  updateUI();
+}
+
+function withRoi(qr, margin = 20) {
+  if (!qr || !qr.bounds) return qr;
+  return { ...qr, roi: expandBounds(qr.bounds, margin, fullCanvas.width, fullCanvas.height) };
+}
+
+function shouldAskPassword() {
+  return !!(state.qr1?.management?.appEncrypted && state.qr2?.rawBytes && !state.qr2?.text);
+}
+
+function updateUI() {
+  const qr1Text = state.qr1?.text || '未検出';
+  const qr2Text = state.qr2?.text || (state.qr2?.rawBytes ? '候補あり（未復号）' : '未検出');
+  const mg1 = state.qr1?.management?.bits || '--';
+  const mg2 = state.qr2?.management?.bits || '--';
+  setTexts(qr1Text, qr2Text, mg1, mg2);
+  if (state.mode === 'search') {
+    document.getElementById('archInfo').textContent = 'search: 縮小画像で2個探索中';
+  } else if (state.mode === 'track') {
+    document.getElementById('archInfo').textContent = 'track: 2個のROIだけ高速追跡中';
+  } else if (state.mode === 'password') {
+    document.getElementById('archInfo').textContent = 'password: 第2QRの復号待ち';
+  } else {
+    document.getElementById('archInfo').textContent = 'paused';
+  }
+}
+
+function finalizeIfDone() {
+  if (!state.qr1?.text || !state.qr2?.text) return false;
+  document.getElementById('finalText1').textContent = state.qr1.text;
+  document.getElementById('finalText2').textContent = state.qr2.text;
+  document.getElementById('finalMg1').textContent = state.qr1.management?.bits || '--';
+  document.getElementById('finalMg2').textContent = state.qr2.management?.bits || '--';
+  document.getElementById('resultScreen').style.display = 'block';
+  document.getElementById('cameraContainer').style.display = 'none';
+  document.getElementById('statusPanel').style.display = 'none';
+  state.mode = 'paused';
+  state.running = false;
+  return true;
+}
+
+async function processSearch() {
+  const { scaleX, scaleY } = prepareSearchCanvas();
+  let candidates = await detectWithBarcodeDetectorOnSearch(scaleX, scaleY);
+  if (candidates.length < 2) {
+    const imgData = imageDataFromCanvas(searchCanvas, searchCtx);
+    const jsqrCandidates = decodeFromImageData(imgData, 0, 0, scaleX, scaleY);
+    candidates = mergeCandidates(candidates, jsqrCandidates);
+  }
+  state.lastSearchCandidates = candidates;
+  const { first, second } = chooseBestPair(candidates);
+  if (first) {
+    applyTrackState(first, second);
+    state.mode = 'track';
+    if (shouldAskPassword()) showPasswordScreen();
+    if (!finalizeIfDone()) updateUI();
+  } else {
+    updateOverlay();
+    updateUI();
+  }
+}
+
+function mergeCandidates(a, b) {
+  const out = a.slice();
+  for (const cand of b) {
+    const dup = out.some(v => distance(v.center, cand.center) < 30);
+    if (!dup) out.push(cand);
+  }
+  return out.sort((x,y) => candidateScore(y) - candidateScore(x));
+}
+
+function decodeInTrackedRoi(entry) {
+  if (!entry?.roi) return null;
+  const roi = cropFullToRoi(entry.roi);
+  const decoded = decodeFromImageData(roi.imageData, roi.bounds.x, roi.bounds.y, 1, 1);
+  if (!decoded.length) return null;
+  return withRoi(decoded[0], 24);
+}
+
+async function processTrack() {
+  const next1 = decodeInTrackedRoi(state.qr1);
+  const next2 = decodeInTrackedRoi(state.qr2);
+  if (next1) state.qr1 = next1;
+  if (next2) state.qr2 = next2;
+
+  if (!next1 && !next2) {
+    state.lostCount += 1;
+  } else {
+    state.lostCount = 0;
+  }
+
+  if (state.lostCount >= state.maxLost) {
+    state.mode = 'search';
+    state.qr1 = null;
+    state.qr2 = null;
+    updateOverlay();
+    updateUI();
+    return;
+  }
+
+  if (!state.qr2 && state.lastSearchCandidates.length > 1) {
+    const { second } = chooseBestPair(state.lastSearchCandidates);
+    if (second) state.qr2 = withRoi(second, 24);
+  }
+
+  updateOverlay();
+  updateUI();
+
+  if (shouldAskPassword()) {
+    showPasswordScreen();
+    return;
+  }
+
+  finalizeIfDone();
+}
+
+async function scanLoop() {
+  if (!state.running) return;
+  state.rafId = requestAnimationFrame(scanLoop);
+
+  const now = performance.now();
+  const interval = state.mode === 'track' ? state.trackInterval : state.searchInterval;
+  if (now - state.lastProcessAt < interval) return;
+  state.lastProcessAt = now;
+
+  if (!fitToVideo()) return;
+
+  fullCtx.drawImage(video, 0, 0, fullCanvas.width, fullCanvas.height);
+
+  if (state.mode === 'password' || state.mode === 'paused') {
+    updateOverlay();
+    return;
+  }
+
+  try {
+    if (state.mode === 'search') {
+      await processSearch();
+    } else {
+      await processTrack();
+    }
+  } catch (e) {
+    console.error(e);
+    document.getElementById('archInfo').textContent = 'error: ' + String(e?.message || e);
+    state.mode = 'search';
+  }
+}
+
+async function createDetector() {
+  if (!('BarcodeDetector' in window)) {
+    state.detector = null;
+    state.detectorName = 'jsQR only';
+    setDetectorInfo('⚡ エンジン: jsQR ROI fallback');
+    return;
+  }
+  try {
+    const supported = await BarcodeDetector.getSupportedFormats();
+    if (supported.includes('qr_code')) {
+      state.detector = new BarcodeDetector({ formats: ['qr_code'] });
+      state.detectorName = 'BarcodeDetector + jsQR ROI';
+      setDetectorInfo('⚡ エンジン: BarcodeDetector + jsQR ROI');
+      return;
+    }
+  } catch (e) {
+    console.warn(e);
+  }
+  state.detector = null;
+  state.detectorName = 'jsQR only';
+  setDetectorInfo('⚡ エンジン: jsQR ROI fallback');
+}
+
+async function startCamera() {
+  if (state.starting) return false;
+  state.starting = true;
+  try {
+    if (state.stream) {
+      for (const tr of state.stream.getTracks()) tr.stop();
+      state.stream = null;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    state.stream = stream;
+    video.srcObject = stream;
+    await new Promise((resolve) => {
+      if (video.readyState >= 1) return resolve();
+      video.addEventListener('loadedmetadata', resolve, { once:true });
+    });
+    await video.play().catch(() => {});
+    return true;
+  } catch (err) {
+    alert("カメラを起動できませんでした。\nエラー: " + err.message);
+    return false;
+  } finally {
+    state.starting = false;
+  }
+}
+
+function stopCamera() {
+  state.running = false;
+  cancelAnimationFrame(state.rafId);
+  state.rafId = 0;
+  try { video.pause(); } catch {}
+  if (state.stream) {
+    for (const tr of state.stream.getTracks()) tr.stop();
+    state.stream = null;
+  }
+  video.srcObject = null;
+}
+
+async function startApp() {
+  const startBtn = document.getElementById('startBtn');
+  startBtn.disabled = true;
+  startBtn.innerText = "準備中...";
+  if (typeof jsQR === 'undefined') {
+    alert("jsQR_architecture.js の読み込みに失敗しました。");
+    startBtn.disabled = false;
+    startBtn.innerText = "📷 カメラを起動する";
+    return;
+  }
+  await createDetector();
+  const success = await startCamera();
+  if (!success) {
+    startBtn.disabled = false;
+    startBtn.innerText = "📷 カメラを起動する";
+    return;
+  }
+  document.getElementById('startScreen').style.display = 'none';
+  document.getElementById('resultScreen').style.display = 'none';
+  document.getElementById('cameraContainer').style.display = 'block';
+  document.getElementById('statusPanel').style.display = 'block';
+  state.mode = 'search';
+  state.running = true;
+  state.lastProcessAt = 0;
+  state.qr1 = null;
+  state.qr2 = null;
+  state.lostCount = 0;
+  updateUI();
+  requestAnimationFrame(scanLoop);
+}
+
+function showPasswordScreen() {
+  state.mode = 'password';
+  document.getElementById('appPasswordInput').value = "";
+  document.getElementById('passwordScreen').style.display = 'flex';
+  updateUI();
+}
+
+function cancelPassword() {
+  document.getElementById('passwordScreen').style.display = 'none';
+  state.mode = 'track';
+  updateUI();
+}
+
+async function submitPassword() {
+  const pw = document.getElementById('appPasswordInput').value;
+  if (!pw || !state.qr2?.rawBytes) return;
+  state.appPassword = pw;
+  state.appMask = deriveEncryptionMaskBytes(state.appPassword, state.qr2.rawBytes.length);
+  const decryptedRaw = Uint8Array.from(state.qr2.rawBytes, (v, i) => v ^ state.appMask[i]);
+  const decoded = jsQR.decodeAppDecryptedCodewords(decryptedRaw, {
+    version: state.qr2.version,
+    formatInfo: state.qr2.formatInfo,
+  });
+  if (decoded && (decoded.text || decoded.data)) {
+    const management = parseManagement(decoded.managementBits || decoded.managementCode);
+    state.qr2 = withRoi({
+      ...state.qr2,
+      text: decoded.text || decoded.data,
+      managementCode: decoded.managementCode ?? null,
+      management,
+      rawBytes: decryptedRaw,
+    }, 24);
+    document.getElementById('passwordScreen').style.display = 'none';
+    updateUI();
+    finalizeIfDone();
+    if (state.running) state.mode = 'track';
+    return;
+  }
+  alert('パスワードが違うか、データが破損しています。');
+  document.getElementById('passwordScreen').style.display = 'none';
+  state.mode = 'track';
+  updateUI();
+}
+
+function goBack() {
+  document.getElementById('resultScreen').style.display = 'none';
+  document.getElementById('cameraContainer').style.display = 'block';
+  document.getElementById('statusPanel').style.display = 'block';
+  state.mode = 'search';
+  state.running = true;
+  state.lastProcessAt = 0;
+  requestAnimationFrame(scanLoop);
+}
+
+window.startApp = startApp;
+window.submitPassword = submitPassword;
+window.cancelPassword = cancelPassword;
+window.goBack = goBack;
+</script>
 </body>
 </html>
