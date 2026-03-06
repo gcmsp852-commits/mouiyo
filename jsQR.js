@@ -377,6 +377,10 @@ function scan(matrix, options) {
                         bottomRightAlignmentPattern: location_1.alignmentPattern,
                     },
                     matrix: matrix,
+                    isRaw: decoded.isRaw,
+                    codewords: decoded.codewords,
+                    formatInfo: decoded.formatInfo,
+                    rawMatrixData: decoded.rawMatrixData
                 };
             }
             if (options && options.multi) {
@@ -399,7 +403,8 @@ function jsQR(data, width, height, providedOptions) {
         inversionAttempts: providedOptions.inversionAttempts || defaultOptions.inversionAttempts,
         appEncMask: providedOptions.appEncMask,
         extractRawOnly: providedOptions.extractRawOnly,
-        multi: providedOptions.multi
+        multi: providedOptions.multi,
+        extractRawForFailed: providedOptions.extractRawForFailed
     };
     var shouldInvert = options.inversionAttempts === "attemptBoth" || options.inversionAttempts === "invertFirst";
     var tryInvertedFirst = options.inversionAttempts === "onlyInvert" || options.inversionAttempts === "invertFirst";
@@ -838,6 +843,9 @@ function decodeMatrix(matrix, options) {
         var dataBlock = dataBlocks_3[_i];
         var correctedBytes = reedsolomon_1.decode(dataBlock.codewords, dataBlock.codewords.length - dataBlock.numDataCodewords);
         if (!correctedBytes) {
+            if (options && options.extractRawForFailed) {
+                return { isRaw: true, codewords: codewords, version: version, formatInfo: formatInfo };
+            }
             return null;
         }
         for (var i = 0; i < dataBlock.numDataCodewords; i++) {
@@ -845,9 +853,16 @@ function decodeMatrix(matrix, options) {
         }
     }
     try {
-        return decodeData_1.decode(resultBytes, version.versionNumber);
+        var res = decodeData_1.decode(resultBytes, version.versionNumber);
+        if (options && options.extractRawForFailed) {
+            res.rawMatrixData = { codewords: codewords, version: version, formatInfo: formatInfo };
+        }
+        return res;
     }
     catch (_a) {
+        if (options && options.extractRawForFailed) {
+            return { isRaw: true, codewords: codewords, version: version, formatInfo: formatInfo };
+        }
         return null;
     }
 }
