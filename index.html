@@ -119,15 +119,10 @@
     const zxingCanvas = document.createElement('canvas');
     const zxingCtx = zxingCanvas.getContext('2d', { willReadFrequently: true });
 
-    // 前処理用キャンバス（コントラスト強調、クロップ等）
-    const procCanvas = document.createElement('canvas');
-    const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
-
     let isProcessing = false;
     let isScanning = false;
     let lastDetectTime = 0;
-    const SCAN_INTERVAL_MS = 120; 
-    let scanCycleCount = 0; // スキャン戦略のローテーション用
+    const SCAN_INTERVAL_MS = 150; 
     
     let firstQR = null;
     let secondQR = null;
@@ -161,7 +156,7 @@
     async function startCamera() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+                video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
             });
             video.srcObject = stream;
             
@@ -201,6 +196,7 @@
         appPassword = pw;
         appMask = deriveEncryptionMaskBytes(appPassword, 5000);
 
+        // まず保存済みRAW候補でresumeDecodeを試みる（即座に復号）
         if (savedRawCandidates && savedRawCandidates.length > 0) {
             let success = false;
             for (let i = 0; i < savedRawCandidates.length; i++) {
@@ -227,6 +223,7 @@
             }
         }
         
+        // resumeDecodeで失敗した場合、appEncMask付きの通常スキャンに切り替えて再開
         document.getElementById('passwordScreen').style.display = 'none';
         isScanning = true;
         lastDetectTime = Date.now(); 
@@ -249,88 +246,9 @@
         return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
     }
 
-    // ===== 画像前処理ユーティリティ =====
-
-    // コントラスト強調: ダイヤモンド型セルの半面積問題に対処
-    function enhanceContrast(imageData, factor) {
-        const data = imageData.data;
-        const f = (259 * (factor + 255)) / (255 * (259 - factor));
-        for (let i = 0; i < data.length; i += 4) {
-            data[i]     = Math.min(255, Math.max(0, f * (data[i] - 128) + 128));     // R
-            data[i + 1] = Math.min(255, Math.max(0, f * (data[i + 1] - 128) + 128)); // G
-            data[i + 2] = Math.min(255, Math.max(0, f * (data[i + 2] - 128) + 128)); // B
-        }
-        return imageData;
-    }
-
-    // 暗めにシフト: ダイヤモンドの半分面積ドットを確実にdarkとして検出
-    function darkenImage(imageData, amount) {
-        const data = imageData.data;
-        for (let i = 0; i < data.length; i += 4) {
-            data[i]     = Math.max(0, data[i] - amount);
-            data[i + 1] = Math.max(0, data[i + 1] - amount);
-            data[i + 2] = Math.max(0, data[i + 2] - amount);
-        }
-        return imageData;
-    }
-
-    // 領域クロップ: srcCanvas から指定矩形を切り出してImageDataを返す
-    function cropImageData(srcCtx, sx, sy, sw, sh) {
-        return srcCtx.getImageData(sx, sy, sw, sh);
-    }
-
-    // jsQR でスキャンして結果を返すヘルパー
-    function scanImageData(imageData) {
-        const rawItems = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: "attemptBoth",
-            extractRawOnly: true,
-            multi: true
-        });
-        return rawItems || [];
-    }
-
-    // RAWアイテムからデコード結果を取得
-    function decodeRawItems(rawItems, offsetX, offsetY) {
-        const results = [];
-        for (const raw of rawItems) {
-            let decoded = jsQR.resumeDecode(raw, null);
-            if (!decoded && appMask) {
-                decoded = jsQR.resumeDecode(raw, Array.from(appMask));
-            }
-            if (decoded) {
-                // クロップされた領域からのオフセットを補正
-                const pts = getPts(raw).map(p => ({ x: p.x + offsetX, y: p.y + offsetY }));
-                results.push({
-                    text: decoded.text,
-                    managementCode: decoded.managementCode,
-                    points: pts,
-                    center: getCenter(pts)
-                });
-            }
-        }
-        return { results, rawItems };
-    }
-
-    // 重複検出を除外（同じテキスト＆近い位置のものを除外）
-    function deduplicateResults(existingItems, newItems) {
-        const merged = [...existingItems];
-        for (const item of newItems) {
-            const isDup = merged.some(existing => {
-                if (existing.text === item.text) {
-                    const dist = getDistance(existing.center, item.center);
-                    return dist < overlayCanvas.width * 0.15;
-                }
-                return false;
-            });
-            if (!isDup) merged.push(item);
-        }
-        return merged;
-    }
-
 async function scanLoop() {
     if (!isScanning) return;
 
-    // キャンバスサイズの調整
     if (video.videoWidth && overlayCanvas.width !== video.videoWidth) {
         overlayCanvas.width = video.videoWidth;
         overlayCanvas.height = video.videoHeight;
@@ -344,139 +262,57 @@ async function scanLoop() {
     if (!isProcessing && now - lastDetectTime > SCAN_INTERVAL_MS && video.readyState >= 2) {
         isProcessing = true;
         lastDetectTime = now;
-        scanCycleCount++;
         let detectedItems = [];
-        let allRawCandidates = [];
 
         try {
-            const W = overlayCanvas.width;
-            const H = overlayCanvas.height;
-            zxingCanvas.width = W;
-            zxingCanvas.height = H;
-            zxingCtx.drawImage(video, 0, 0, W, H);
+            zxingCanvas.width = overlayCanvas.width;
+            zxingCanvas.height = overlayCanvas.height;
+            zxingCtx.drawImage(video, 0, 0, zxingCanvas.width, zxingCanvas.height);
+            const imageData = zxingCtx.getImageData(0, 0, zxingCanvas.width, zxingCanvas.height);
 
-            // ===== 戦略1: フルフレームスキャン（従来方式）=====
-            const fullImageData = zxingCtx.getImageData(0, 0, W, H);
-            const fullRaw = scanImageData(fullImageData);
-            const fullResult = decodeRawItems(fullRaw, 0, 0);
-            detectedItems = fullResult.results;
-            allRawCandidates = fullResult.rawItems;
-
-            // ===== 戦略2: まだ2つ見つかっていない場合、クロップ戦略 =====
-            if (detectedItems.length < 2) {
-                // QR Twinの構造: QR1のファインダは左上、QR2のファインダ(180°回転)は右下
-                // 8.5セルシフトを考慮し、上寄り65%と下寄り65%をクロップ
-                const cropRatio = 0.65;
-
-                // 上寄り領域（QR1のファインダパターンを含む）
-                const topH = Math.floor(H * cropRatio);
-                const topImageData = cropImageData(zxingCtx, 0, 0, W, topH);
-                const topRaw = scanImageData(topImageData);
-                const topResult = decodeRawItems(topRaw, 0, 0);
-                detectedItems = deduplicateResults(detectedItems, topResult.results);
-                allRawCandidates = allRawCandidates.concat(topResult.rawItems);
-
-                // 下寄り領域（QR2のファインダパターン(回転後)を含む）
-                const botY = Math.floor(H * (1 - cropRatio));
-                const botH = H - botY;
-                const botImageData = cropImageData(zxingCtx, 0, botY, W, botH);
-                const botRaw = scanImageData(botImageData);
-                const botResult = decodeRawItems(botRaw, 0, botY);
-                detectedItems = deduplicateResults(detectedItems, botResult.results);
-                allRawCandidates = allRawCandidates.concat(botResult.rawItems);
+            // ========== メインスキャン: 通常jsQRデコード ==========
+            // 通常デコードはQRツインでも正しく動作する（行列転置リトライが効く）
+            // appMask設定済みの場合はappEncMaskも渡して暗号化QRを直接復号
+            const scanOptions = { inversionAttempts: "attemptBoth", multi: true };
+            if (appMask) {
+                scanOptions.appEncMask = Array.from(appMask);
             }
 
-            // ===== 戦略3: まだ足りない場合、左上1/4と右下1/4をクロップ =====
-            if (detectedItems.length < 2) {
-                const qW = Math.floor(W * 0.6);
-                const qH = Math.floor(H * 0.6);
+            const results = jsQR(imageData.data, imageData.width, imageData.height, scanOptions);
 
-                // 左上クロップ
-                const tlImageData = cropImageData(zxingCtx, 0, 0, qW, qH);
-                const tlRaw = scanImageData(tlImageData);
-                const tlResult = decodeRawItems(tlRaw, 0, 0);
-                detectedItems = deduplicateResults(detectedItems, tlResult.results);
-                allRawCandidates = allRawCandidates.concat(tlResult.rawItems);
-
-                // 右下クロップ
-                const brX = W - qW;
-                const brY = H - qH;
-                const brImageData = cropImageData(zxingCtx, brX, brY, qW, qH);
-                const brRaw = scanImageData(brImageData);
-                const brResult = decodeRawItems(brRaw, brX, brY);
-                detectedItems = deduplicateResults(detectedItems, brResult.results);
-                allRawCandidates = allRawCandidates.concat(brResult.rawItems);
-            }
-
-            // ===== 戦略4: コントラスト強調スキャン（ローテーションで実行）=====
-            if (detectedItems.length < 2 && (scanCycleCount % 3 === 0)) {
-                // コントラスト強調版
-                procCanvas.width = W;
-                procCanvas.height = H;
-                procCtx.drawImage(video, 0, 0, W, H);
-                let enhancedData = procCtx.getImageData(0, 0, W, H);
-                enhanceContrast(enhancedData, 80);
-                const enhRaw = scanImageData(enhancedData);
-                const enhResult = decodeRawItems(enhRaw, 0, 0);
-                detectedItems = deduplicateResults(detectedItems, enhResult.results);
-                allRawCandidates = allRawCandidates.concat(enhResult.rawItems);
-            }
-
-            // ===== 戦略5: 暗めシフト + コントラスト強調（ローテーション）=====
-            if (detectedItems.length < 2 && (scanCycleCount % 3 === 1)) {
-                procCanvas.width = W;
-                procCanvas.height = H;
-                procCtx.drawImage(video, 0, 0, W, H);
-                let darkData = procCtx.getImageData(0, 0, W, H);
-                darkenImage(darkData, 30);
-                enhanceContrast(darkData, 60);
-                const darkRaw = scanImageData(darkData);
-                const darkResult = decodeRawItems(darkRaw, 0, 0);
-                detectedItems = deduplicateResults(detectedItems, darkResult.results);
-                allRawCandidates = allRawCandidates.concat(darkResult.rawItems);
-            }
-
-            // ===== 戦略6: 拡大スキャン（中央部を2倍に拡大してモジュール解像度を上げる）=====
-            if (detectedItems.length < 2 && (scanCycleCount % 3 === 2)) {
-                const zoomW = Math.floor(W * 0.6);
-                const zoomH = Math.floor(H * 0.6);
-                const zoomX = Math.floor((W - zoomW) / 2);
-                const zoomY = Math.floor((H - zoomH) / 2);
-                procCanvas.width = W;
-                procCanvas.height = H;
-                procCtx.drawImage(zxingCanvas, zoomX, zoomY, zoomW, zoomH, 0, 0, W, H);
-                const zoomData = procCtx.getImageData(0, 0, W, H);
-                const zoomRaw = scanImageData(zoomData);
-                // 拡大スキャンの座標を元画像に逆変換
-                const scaleX = zoomW / W;
-                const scaleY = zoomH / H;
-                const zoomResults = [];
-                for (const raw of zoomRaw) {
-                    let decoded = jsQR.resumeDecode(raw, null);
-                    if (!decoded && appMask) {
-                        decoded = jsQR.resumeDecode(raw, Array.from(appMask));
-                    }
-                    if (decoded) {
-                        const pts = getPts(raw).map(p => ({
-                            x: p.x * scaleX + zoomX,
-                            y: p.y * scaleY + zoomY
-                        }));
-                        zoomResults.push({
-                            text: decoded.text,
-                            managementCode: decoded.managementCode,
+            if (results) {
+                const resultArray = Array.isArray(results) ? results : [results];
+                for (const result of resultArray) {
+                    if (result && result.data) {
+                        const pts = [
+                            result.location.topLeftCorner,
+                            result.location.topRightCorner,
+                            result.location.bottomRightCorner,
+                            result.location.bottomLeftCorner
+                        ];
+                        detectedItems.push({
+                            text: result.data,
+                            managementCode: result.managementCode,
                             points: pts,
                             center: getCenter(pts)
                         });
                     }
                 }
-                detectedItems = deduplicateResults(detectedItems, zoomResults);
-                allRawCandidates = allRawCandidates.concat(zoomRaw);
             }
 
-            // 全候補を保存（パスワード入力画面用）
-            if (allRawCandidates.length > 0) {
-                savedRawCandidates = allRawCandidates;
+            // ========== RAWデータ保存（パスワード入力画面でのresumeDecodeフォールバック用） ==========
+            // パスワード未入力時のみ実行（暗号化検出後にRAW候補を蓄積）
+            if (!appPassword && firstQR) {
+                const rawItems = jsQR(imageData.data, imageData.width, imageData.height, {
+                    inversionAttempts: "attemptBoth",
+                    extractRawOnly: true,
+                    multi: true
+                });
+                if (rawItems && rawItems.length > 0) {
+                    savedRawCandidates = rawItems;
+                }
             }
+
         } catch (err) {
             console.error("Scan error:", err);
         }
@@ -486,14 +322,14 @@ async function scanLoop() {
 
         // 第1QR確定後の暗号化チェック
         if (firstQR && !appPassword) {
-            const mgmtStr = firstQR.managementCode !== undefined ?
+            const mgmtStr = firstQR.managementCode !== undefined ? 
                             firstQR.managementCode.toString(2).padStart(16, '0') : "0000000000000000";
-
+            
             if (mgmtStr[7] === '1') {
                 if (document.getElementById('passwordScreen').style.display !== 'flex') {
                     showPasswordScreen();
                     isProcessing = false;
-                    return;
+                    return; 
                 }
             }
         }
@@ -510,7 +346,6 @@ async function scanLoop() {
     requestAnimationFrame(scanLoop);
 }
     // ▼▼▼ QRツイン対応の振り分けロジック ▼▼▼
-    // 管理部コード（16bit）が異なるかチェック（QRツインではbit0が異なる）
     function hasDifferentManagement(item1, item2) {
         if (item1.managementCode === undefined || item2.managementCode === undefined) return false;
         return item1.managementCode !== item2.managementCode;
@@ -548,25 +383,17 @@ async function scanLoop() {
                 firstQR = item;
                 updateUI();
             } else if (!secondQR) {
-                // テキストが異なる → 確実に別のQR
                 if (item.text !== firstQR.text) {
                     secondQR = item;
                     updateUI();
-                } 
-                // テキストが同じ場合 → 管理部コードで区別（QRツインの同一データモード）
-                else if (hasDifferentManagement(firstQR, item)) {
+                } else if (hasDifferentManagement(firstQR, item)) {
                     secondQR = item;
                     updateUI();
-                }
-                // テキストも管理部も同じ → 位置で区別
-                else {
+                } else {
                     const dist = getDistance(firstQR.center, item.center);
                     const qrSize = getDistance(item.points[0], item.points[1]);
                     
-                    // QRツインは同じ位置に重なっているが、8.5セルずれるため
-                    // ファインダパターンの検出位置は少し離れる
-                    // 閾値を低めに設定して、近い位置でも別QRとして認識
-                    const distanceThreshold = Math.min(overlayCanvas.width * 0.05, qrSize * 0.25);
+                    const distanceThreshold = Math.min(overlayCanvas.width * 0.1, qrSize * 0.45);
 
                     if (dist > distanceThreshold) {
                         secondQR = item;
@@ -613,7 +440,7 @@ async function scanLoop() {
 
     function goBack() {
         firstQR = null; secondQR = null; appPassword = null; appMask = null;
-        savedRawCandidates = []; scanCycleCount = 0;
+        savedRawCandidates = [];
         document.getElementById('text1').innerText = "未検出"; document.getElementById('text2').innerText = "未検出";
         document.getElementById('mg1').innerText = "--"; document.getElementById('mg2').innerText = "--";
         document.getElementById('resultScreen').style.display = 'none';
